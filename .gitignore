@@ -1,0 +1,17 @@
+# Secrets: never commit live Boson credentials
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local development and test artifacts
+node_modules/
+dist/
+build/
+coverage/
+captures/
+.local/
+.DS_Store
+*.log
