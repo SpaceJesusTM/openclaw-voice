@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Higgs 1.5 · Realtime lab</title>
+    <meta name="description" content="Local validation playground for Higgs Realtime 1.5 Preview." />
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div><p class="eyebrow">BOSON / OPENCLAW VOICE</p><h1>Realtime lab<span>1.5 Preview</span></h1></div>
+        <span id="status" class="badge" role="status">Loading configuration</span>
+      </header>
+      <section class="session panel" aria-label="Session controls">
+        <div class="model"><span class="label">Required model</span><strong id="configured">—</strong><span class="label">Server acknowledged</span><strong id="acknowledged">Not connected</strong></div>
+        <div class="settings"><label>Voice ID<input id="voice" value="default" autocomplete="off" /></label><label class="checkbox"><input type="checkbox" id="web-search" /> Native web search <small>optional</small></label><small>Voice and search apply on connection.</small></div>
+        <div class="connection-buttons"><button id="connect" disabled>Connect to preview</button><button id="disconnect" class="secondary" disabled>Disconnect</button></div>
+      </section>
+      <p id="notice" role="alert">Checking local server…</p>
+      <main>
+        <section class="panel conversation" aria-label="Conversation">
+          <div class="panel-heading"><h2>Conversation</h2><span id="activity">Ready when you are</span></div>
+          <div class="audio-controls"><button id="mic" class="secondary" disabled>Start microphone</button><meter id="mic-level" min="0" max="0.25" value="0" aria-label="Microphone level"></meter><button id="stop" class="secondary" disabled>Stop playback</button><button id="speaker" class="quiet">Test speaker</button></div>
+          <div id="transcript" aria-live="polite" aria-relevant="additions text"><p id="empty">Start with a typed message, then try your microphone.<br /><span>Headphones help keep the assistant’s voice out of the microphone.</span></p></div>
+          <form id="message-form"><label class="sr-only" for="message">Message</label><input id="message" placeholder="Type a message…" autocomplete="off" maxlength="8000" disabled /><button id="send" disabled>Send</button></form>
+          <button id="planner" class="quiet" disabled>Try: “What’s on my planner today?”</button>
+        </section>
+        <aside class="panel inspection" aria-label="Session inspection">
+          <div class="panel-heading"><h2>Inspection</h2><button id="clear-log" class="quiet">Clear log</button></div>
+          <div id="metrics">0 audio chunks · 0.00 s generated · 0 local results</div>
+          <h3>Tool activity</h3><div id="tools"><p class="muted">Function calls, results, and timings appear here.</p></div>
+          <details><summary>Resolved session</summary><pre id="resolved">Awaiting server acknowledgement.</pre></details>
+          <h3>Event log <span>latest 300</span></h3><div id="log" tabindex="0" aria-label="Debug event log"></div>
+        </aside>
+      </main>
+      <footer>Local experiment · PCM16 / 24 kHz · Server VAD · No OpenClaw connection</footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

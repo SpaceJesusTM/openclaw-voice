@@ -1,0 +1,9 @@
+{
+  "day": "today",
+  "timezone": "America/Toronto",
+  "verification_code": "NEBULA-742",
+  "entries": [
+    { "time": "10:17", "title": "Copper Otter rehearsal", "location": "Juniper room 9" },
+    { "time": "14:43", "title": "Violet kite calibration", "location": "Studio 27" }
+  ]
+}
