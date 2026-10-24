@@ -142,6 +142,8 @@ async def test_session_payload_advertises_config_built_tools(gateway, fixture_di
         await llm._send_session_update()
         payload = llm._ws_send.call_args.args[0]["session"]
         assert payload["model"] == MODEL and payload["output_modalities"] == ["audio"]
+        assert payload["audio"]["input"]["turn_detection"]["threshold"] == 0.90
+        assert payload["audio"]["input"]["turn_detection"]["silence_duration_ms"] == 600
         by_name = {t["name"]: t for t in payload["tools"]}
         assert set(by_name) == {"get_context", "delegate_task", "check_tasks", "cancel_task"}
         assert by_name["get_context"]["parameters"]["properties"]["topic"]["enum"] == ["project.active", "tests.last", "jobs.recent"]

@@ -37,8 +37,8 @@ class Settings:
     model: str = MODEL
     url: str = URL
     voice_override: str | None = None
-    vad_threshold: float | None = None
-    vad_silence_ms: int | None = None
+    vad_threshold: float | None = 0.90
+    vad_silence_ms: int | None = 600
     noise_reduction: str | None = None
     persist_traces: bool = True
 
@@ -90,8 +90,8 @@ def load_settings(environ: dict[str, str] | None = None, require_key: bool = Tru
         model=values.get("BOSON_REALTIME_MODEL", MODEL),
         url=values.get("BOSON_REALTIME_URL", URL),
         voice_override=values.get("CLAWVOICE_VOICE_OVERRIDE") or None,
-        vad_threshold=float(values["BOSON_VAD_THRESHOLD"]) if "BOSON_VAD_THRESHOLD" in values else None,
-        vad_silence_ms=int(values["BOSON_VAD_SILENCE_MS"]) if "BOSON_VAD_SILENCE_MS" in values else None,
+        vad_threshold=float(values["BOSON_VAD_THRESHOLD"]) if "BOSON_VAD_THRESHOLD" in values else 0.90,
+        vad_silence_ms=int(values["BOSON_VAD_SILENCE_MS"]) if "BOSON_VAD_SILENCE_MS" in values else 600,
         noise_reduction=values.get("BOSON_NOISE_REDUCTION"),
         persist_traces=flag("CLAWVOICE_PERSIST_TRACES", "true"),
     )

@@ -24,7 +24,7 @@ MAX_OUTPUT = 8 * 1024 * 1024
 MAX_PAGES = 20
 EVENT_FIELDS = ("id", "iCalUID", "etag", "summary", "description", "location", "start", "end",
                 "status", "transparency", "attendees", "organizer", "creator",
-                "recurrence", "recurringEventId", "originalStartTime", "htmlLink")
+                "extendedProperties", "recurrence", "recurringEventId", "originalStartTime", "htmlLink")
 
 
 def account():
@@ -73,7 +73,7 @@ def run_gog(command, exact, calendar_management=False, allow_absent=False):
             env[key] = os.environ[key]
     env["GOG_ACCOUNT"] = account()
     env["GOG_CLIENT"] = client
-    env["GOG_TIMEZONE"] = os.environ.get("TARI_TIMEZONE", "UTC")
+    env["GOG_TIMEZONE"] = os.environ.get("TARI_TIMEZONE", "America/Toronto")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env, check=False)
     except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
@@ -161,7 +161,8 @@ def sanitize_mail(value):
     security = re.compile(
         r"verif(?:y|ication)|one[ -]?time|\botp\b|security code|auth(?:entication|orization) code|"
         r"sign[ -]?in code|login code|password|account recovery|recovery (?:code|link)|"
-        r"reset (?:code|link)", re.I)
+        r"reset (?:code|link)|passcode|two[ -]?(?:factor|step)|\b2fa\b|backup codes?|"
+        r"security alert|account security|new (?:sign[ -]?in|login)|signed in|suspicious (?:activity|login)", re.I)
     def clean(item, sensitive=False, key=""):
         if isinstance(item, dict):
             # Apply to a whole message so a subject can protect a numeric body.
@@ -182,7 +183,7 @@ def sanitize_mail(value):
 def list_events(start, end):
     if datetime.fromisoformat(end) <= datetime.fromisoformat(start):
         raise GoogleError("Calendar end must be after start.")
-    zone = os.environ.get("TARI_TIMEZONE", "UTC")
+    zone = os.environ.get("TARI_TIMEZONE", "America/Toronto")
     ZoneInfo(zone)
     sources, rows = calendars(), []
     for source in sources:
@@ -212,6 +213,11 @@ def manage_calendar(arguments):
                 "--no-input", "--non-interactive", "--noninteractive"}
     if any(arg.split("=", 1)[0] in reserved or arg.startswith(("-a", "-j", "-p", "-v")) for arg in arguments):
         raise GoogleError("Calendar account, credentials and output settings are managed by the wrapper.")
+    # Offset-bearing timestamps are already absolute instants. Add IANA metadata,
+    # never add/subtract the Toronto offset a second time.
+    if arguments[0] in ("create", "update") and any(a.split("=", 1)[0] in ("--from", "--to") for a in arguments):
+        if not any(a.split("=", 1)[0] in ("--timezone", "--start-timezone", "--end-timezone", "--all-day") for a in arguments):
+            arguments = [*arguments, "--timezone", os.environ.get("TARI_TIMEZONE", "America/Toronto")]
     try:
         data = run_gog(["calendar", *arguments], "calendar", calendar_management=True)
     except GoogleError:
@@ -225,7 +231,8 @@ def parser():
     groups = cli.add_subparsers(dest="service", required=True)
     mail = groups.add_parser("gmail").add_subparsers(dest="action", required=True)
     search = mail.add_parser("search")
-    search.add_argument("query")
+    search.add_argument("query", nargs="?", default="")
+    search.add_argument("--all-mail", action="store_true", help="explicitly search beyond Primary Inbox")
     search.add_argument("--max", type=int, default=20)
     search.add_argument("--page", type=identifier)
     read = mail.add_parser("read")
@@ -251,9 +258,12 @@ def main(argv=None):
         account()
         if args.service == "gmail":
             if args.action == "search":
-                if not 1 <= args.max <= 100 or not args.query.strip() or len(args.query) > 2000 or args.query.startswith("-"):
+                query = args.query.strip()
+                if not args.all_mail:
+                    query = "in:inbox category:primary " + ("(" + query + ")" if query else "")
+                if not 1 <= args.max <= 100 or not query.strip() or len(query) > 2200 or query.startswith("-"):
                     raise GoogleError("Use a bounded Gmail query and --max between 1 and 100.")
-                command = ["gmail", "messages", "search", args.query, "--max", str(args.max)]
+                command = ["gmail", "messages", "search", query, "--max", str(args.max)]
                 if args.page:
                     command += ["--page", args.page]
                 result = run_gog(command, "gmail.messages.search")
@@ -265,7 +275,7 @@ def main(argv=None):
                 row = result.get("message", result) if isinstance(result, dict) else None
                 if not isinstance(row, dict) or not row.get("id"):
                     raise GoogleError("Google returned no verifiable message.")
-            output = {"data": sanitize_mail(result), "untrusted_content": True, "read_only": True}
+            output = {"data": sanitize_mail(result), "untrusted_content": True, "read_only": True, **({"query": query} if args.action == "search" else {})}
         elif args.action == "calendars":
             output = {"calendars": calendars(), "complete": True, "untrusted_content": True}
         elif args.action == "list":

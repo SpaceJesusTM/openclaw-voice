@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Tari's local day planner. Deterministic; never invokes a model.
 
-Planner and commute blocks live in planner/days/YYYY-MM-DD.md next to bin/.
+Legacy Planner/commute blocks live in planner/days/YYYY-MM-DD.md next to bin/.
 The persistent categorized checklist lives in planner/checklist.md.
 Calendar commitments are read live through tari-google and never stored here.
-This helper cannot create, modify, or delete Calendar events.
+New timed entries are Calendar events; legacy local blocks remain local until an explicit migration.
 
     day-planner show [DAY] [--schedule] [--json]
     day-planner free [DAY] [--after TIME] [--before TIME] [--min DURATION]
@@ -232,7 +232,8 @@ def day_title(day):
 
 def line(item):
     when = item.get("time_note") or ("All day" if item.get("allday") else span(item["start"], item["end"]))
-    return f"{when}  {ICON[item['kind']]} {item['title']}"
+    context = " (Calendar context; not busy)" if item.get("counted") is False else ""
+    return f"{when}  {ICON[item['kind']]} {item['title']}{context}"
 
 
 def minutes(n):
@@ -344,8 +345,7 @@ class Day:
         listing = "\n".join(f"  {b['id']}  {line(b)}" for b in (hits or self.blocks)) or "  (no blocks that day)"
         if hits:
             raise Fail(f"'{ref}' matches {len(hits)} blocks on {self.day}; use the id:\n{listing}")
-        raise Fail(f"no Planner or Commute block matches '{ref}' on {self.day}. Calendar events are "
-                   f"never changed by the planner. Blocks that day:\n{listing}")
+        raise Fail(f"no legacy block matches '{ref}' on {self.day}. Blocks that day:\n{listing}")
 
 
 class Checklist:
@@ -484,7 +484,9 @@ def read_calendar(day, count_ids=()):
         counted_event = forced or (own and not declined) or (not own and accepted)
         item = {"kind": "calendar", "id": ev.get("id") or "", "title": " ".join(str(ev.get("summary") or
                 "(untitled event)").split()), "calendar": cal, "own": own,
-                "free": ev.get("transparency") == "transparent"}
+                "free": ev.get("transparency") == "transparent",
+                "recurring": bool(ev.get("recurrence") or ev.get("recurringEventId")),
+                "multiday": False}
         try:
             if start.get("dateTime"):
                 a = datetime.fromisoformat(start["dateTime"].replace("Z", "+00:00"))
@@ -497,6 +499,7 @@ def read_calendar(day, count_ids=()):
                     raise ValueError("event end must follow start")
                 if a >= upper or b <= lower:
                     continue
+                item["multiday"] = a < lower or b > upper
                 a, b = max(a, lower).astimezone(zone), min(b, upper).astimezone(zone)
                 first = a.hour * 60 + a.minute
                 last = 1440 if b.astimezone(timezone.utc) >= upper else b.hour * 60 + b.minute + bool(b.second or b.microsecond)
@@ -543,9 +546,9 @@ def calendar_for(day, args, needed=True):
     if getattr(args, "no_calendar", False):
         return [], ["Calendar was not checked."]
     try:
-        # Events that are not counted are dropped here without a word: normal
-        # commands never print another person's event. `excluded` is the way to see them.
-        events, _, warnings, _ = read_calendar(day, tuple(getattr(args, "count", None) or ()))
+        # Show every source; context-only entries never reserve busy time.
+        events, context, warnings, _ = read_calendar(day, tuple(getattr(args, "count", None) or ()))
+        events += [dict(item, free=True) for item in context]
     except Fail as e:
         if needed:
             raise Fail(f"{e} Nothing was changed. Tell the user; re-run with --no-calendar only if "
@@ -562,8 +565,12 @@ def overlaps(start, end, items, skip=None):
 
 def guard(start, end, title, day_state, events, args, skip=None):
     """Refuse an overlapping block unless --allow-overlap. Returns the overlaps it allowed."""
+    if day_state.bad:
+        raise malformed(day_state.path, day_state.bad)
     check_local_span(day_state.day, start, end)
-    hits = overlaps(start, end, events + day_state.blocks, skip)
+    hits = overlaps(start, end, [i for i in events + day_state.blocks
+                                       if not (skip and i["kind"] == skip["kind"] == "calendar"
+                                               and i["id"] == skip["id"] and i["calendar"] == skip["calendar"])], skip)
     if hits and not args.allow_overlap:
         raise Fail(f"Not saved: {title} {span(start, end)} on {day_title(day_state.day)} overlaps:\n"
                    + "\n".join(f"  {line(h)}" for h in hits)
@@ -650,7 +657,7 @@ def cmd_show(args):
     data_status = "malformed" if state.bad or cl.bad else \
                   "incomplete" if any(item["code"] == "CALENDAR_UNAVAILABLE" for item in warning_details) else "complete"
     if args.json:
-        keep = ("kind", "id", "title", "start", "end", "allday", "free", "start_at", "end_at", "time_note")
+        keep = ("kind", "id", "title", "start", "end", "allday", "free", "start_at", "end_at", "time_note", "calendar", "counted", "why")
         items = [{k: i[k] for k in keep if k in i} for i in items]
         print(json.dumps({"date": day.isoformat(), "time_zone": TZ_NAME, "schedule": items,
                           "scope": "local" if args.no_calendar else "calendar-and-local",
@@ -699,6 +706,78 @@ def cmd_excluded(args):
     print("\n".join(out))
 
 
+def calendar_call(arguments):
+    """One attempt only. There is no second local write to reconcile."""
+    try:
+        result = subprocess.run([GOOGLE, "calendar", *arguments], capture_output=True, text=True, timeout=90)
+        data = json.loads(result.stdout)
+        if result.returncode or not isinstance(data, dict):
+            raise ValueError()
+        return data
+    except (OSError, UnicodeError, subprocess.TimeoutExpired, ValueError):
+        raise Fail("Calendar write/read-back was not verified; outcome may be unknown. "
+                   "Inspect the schedule before retrying. No local block was changed.", 3) from None
+
+
+def scheduled_write(action, day, block, start=None, end=None, title=None):
+    """Calendar is authoritative. Emit identity for the voice receipt/verifier."""
+    if block.get("recurring") or block.get("allday") or block.get("multiday") or block.get("time_note"):
+        raise Fail("Use the Calendar skill for recurring, all-day, multi-day or clock-change events; "
+                   "clarify occurrence scope before changing them.")
+    cid = block.get("calendar", "primary")
+    args = ["manage", action, cid] + ([block["id"]] if action != "create" else [])
+    if title is not None:
+        args += ["--summary", title]
+    if start is not None:
+        check_local_span(day, start, end)
+        args += ["--from", local_candidates(day, start)[0].isoformat(),
+                 "--to", local_candidates(day, end)[0].isoformat(), "--timezone", TZ_NAME]
+    args += ["--send-updates", "none"]
+    if action == "create":
+        args += ["--private-prop", "clawvoice_kind=" + block.get("kind", "planner")]
+    data = calendar_call(args).get("data", {})
+    row = data.get("event", data) if isinstance(data, dict) else None
+    eid = row.get("id") if action == "create" and isinstance(row, dict) else block.get("id")
+    if not eid:
+        raise Fail("Calendar returned no event ID; inspect the schedule before retrying. No local copy saved.", 3)
+    actual = calendar_call(["get", cid, eid] + (["--allow-absent"] if action == "delete" else [])).get("event", {})
+    if not isinstance(actual, dict):
+        raise Fail("Calendar read-back returned no event; inspect before retrying. No local copy saved.", 3)
+    if action == "delete":
+        valid = actual.get("absent") is True or actual.get("status") == "cancelled"
+    else:
+        valid = actual.get("id") == eid and actual.get("status") != "cancelled"
+        if title is not None:
+            valid = valid and actual.get("summary") == title
+        if start is not None:
+            try:
+                for key, minute in (("start", start), ("end", end)):
+                    instant = datetime.fromisoformat(actual[key]["dateTime"].replace("Z", "+00:00"))
+                    valid = valid and instant == local_candidates(day, minute)[0]
+            except (KeyError, ValueError, TypeError):
+                valid = False
+    if not valid:
+        raise Fail("Calendar read-back did not match; inspect the event before retrying. No local copy saved.", 3)
+    print(json.dumps({"type": "calendar_event", "action": {"create": "created", "update": "updated", "delete": "deleted"}[action],
+                      "calendar_id": cid, "event_id": eid, "verified": True}))
+
+
+def schedule_find(state, ref, args):
+    if state.bad:
+        raise malformed(state.path, state.bad)
+    events, warnings = calendar_for(state.day, args)
+    # Resolve across both sources; never guess between a legacy block and an event.
+    pool = state.blocks + events
+    hits = [b for b in pool if b["id"] == ref]
+    if not hits and ref.startswith("@"):
+        hits = [b for b in pool if b["start"] == parse_time(ref[1:])]
+    if not hits:
+        hits = [b for b in pool if b["title"].casefold() == ref.casefold()] or [b for b in pool if ref.casefold() in b["title"].casefold()]
+    if len(hits) != 1:
+        raise Fail("Schedule reference is missing or ambiguous; use the unique event/block ID from show --json.")
+    return hits[0], events, warnings
+
+
 def cmd_add(args):
     day = parse_day(args.day)
     start, end = parse_range(args.range)
@@ -710,12 +789,15 @@ def cmd_add(args):
 
 def put(state, events, warnings, args, kind, start, end, title):
     check_local_span(state.day, start, end)
-    same = [b for b in state.blocks if (b["kind"], b["start"], b["end"], b["title"].lower())
-            == (kind, start, end, title.lower())]
+    same = [b for b in state.blocks + events if (b["start"], b["end"], b["title"].lower())
+            == (start, end, title.lower())]
     if same:
         print(f"Already planned: {line(same[0])} ({day_title(state.day)}).")
         return
     hits = guard(start, end, title, state, events, args)
+    if not getattr(args, "local_only", False):
+        scheduled_write("create", state.day, {"kind": kind}, start, end, title)
+        return
     block = {"id": state.new_id(), "kind": kind, "start": start, "end": end, "title": title}
     state.blocks.append(block)
     state.save()
@@ -738,7 +820,7 @@ def cmd_place(args):
 def cmd_move(args):
     day = parse_day(args.day)
     state = Day(day)
-    block = state.find(args.ref)
+    block, source_events, source_warnings = schedule_find(state, args.ref, args)
     dest_day = parse_day(args.to_day) if args.to_day else day
     if not args.range and dest_day == day:
         raise Fail("give a new time range, a new start time, or --to-day")
@@ -751,8 +833,11 @@ def cmd_move(args):
         start = parse_time(args.range)
         start, end = check_span(start, start + length)
     dest = state if dest_day == day else Day(dest_day)
-    events, warnings = calendar_for(dest_day, args)
+    events, warnings = (source_events, source_warnings) if dest_day == day else calendar_for(dest_day, args)
     hits = guard(start, end, block["title"], dest, events, args, skip=block)
+    if block["kind"] == "calendar":
+        scheduled_write("update", dest_day, block, start, end)
+        return
     if dest is state:
         block.update(start=start, end=end)
     else:  # write the destination first: a crash leaves a duplicate, never a loss
@@ -769,12 +854,15 @@ def cmd_move(args):
 def cmd_resize(args):
     day = parse_day(args.day)
     state = Day(day)
-    block = state.find(args.ref)
+    block, source_events, source_warnings = schedule_find(state, args.ref, args)
     need = parse_dur(args.duration)
     start, end = (block["end"] - need, block["end"]) if args.keep_end else (block["start"], block["start"] + need)
     check_span(start, end)
-    events, warnings = calendar_for(day, args)
+    events, warnings = source_events, source_warnings
     hits = guard(start, end, block["title"], state, events, args, skip=block)
+    if block["kind"] == "calendar":
+        scheduled_write("update", day, block, start, end)
+        return
     block.update(start=start, end=end)
     state.save()
     print(f"Resized {line(block)} ({day_title(day)})." + tail(warnings, hits))
@@ -782,15 +870,22 @@ def cmd_resize(args):
 
 def cmd_rename(args):
     state = Day(parse_day(args.day))
-    block = state.find(args.ref)
-    block["title"] = clean(args.title, "block title", "|")
+    block, source_events, source_warnings = schedule_find(state, args.ref, args)
+    title = clean(args.title, "block title", "|")
+    if block["kind"] == "calendar":
+        scheduled_write("update", state.day, block, title=title)
+        return
+    block["title"] = title
     state.save()
     print(f"Renamed to {line(block)} ({day_title(state.day)}).")
 
 
 def cmd_remove(args):
     state = Day(parse_day(args.day))
-    block = state.find(args.ref)
+    block, source_events, source_warnings = schedule_find(state, args.ref, args)
+    if block["kind"] == "calendar":
+        scheduled_write("delete", state.day, block)
+        return
     state.blocks.remove(block)
     state.save()
     print(f"Removed {line(block)} ({day_title(state.day)}).")
@@ -916,6 +1011,8 @@ def main():
     def cmd(name, fn, cal=None):
         s = sub.add_parser(name)
         s.set_defaults(fn=fn)
+        if name in ("add", "place", "commute-add"):
+            s.add_argument("--local-only", action="store_true", help="explicitly create a legacy local block without Calendar")
         if cal:  # "read": Calendar shown; "check": Calendar used for the overlap check
             s.add_argument("--count", action="append", metavar="EVENT_ID",
                            help="count this shared-calendar event as the user's own")

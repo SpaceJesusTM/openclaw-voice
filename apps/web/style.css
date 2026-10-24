@@ -196,3 +196,5 @@ button.link { background: none; border: none; color: var(--muted); padding: 2px 
   .conversation-panel { min-height: 55vh; }
   .turn { max-width: 92%; }
 }
+
+#push-talk { touch-action: none; user-select: none; }

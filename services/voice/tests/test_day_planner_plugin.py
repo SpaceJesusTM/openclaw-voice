@@ -93,6 +93,22 @@ async def test_calendar_views(agent):
     assert "Next: Study group, tomorrow, Saturday, October 24, 10 to 11:30 AM." in current.summary
 
 
+async def test_shared_calendar_context_is_visible_but_not_the_next_commitment(agent, fixture_dir):
+    from copy import deepcopy
+
+    data = deepcopy(PLANNER)
+    data["days"]["2026-10-23"].append({
+        "kind": "calendar", "id": "context1", "title": "Shared context", "counted": False,
+        "free": True, "start": 780, "end": 840,
+        "start_at": "2026-10-23T13:00:00-04:00", "end_at": "2026-10-23T14:00:00-04:00",
+    })
+    write_fixture(fixture_dir, "planner", data)
+    resolved = await day_planner.planner_day(ctx(agent), agent.topic("planner.today"))
+    assert "Shared context" in resolved.summary and "not a commitment" in resolved.summary
+    nxt = await day_planner.calendar_next(ctx(agent), agent.topic("calendar.next"))
+    assert nxt.value["next"]["title"] == "Project Meeting"
+
+
 async def test_checklist_focus(agent):
     resolved = await day_planner.checklist_focus(ctx(agent), agent.topic("checklist.focus"))
     assert resolved.summary == "Priorities: Review prototype. In progress: Book dentist. Plus 1 other open task."

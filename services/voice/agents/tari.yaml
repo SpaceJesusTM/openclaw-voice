@@ -71,10 +71,11 @@ hot_context:
       read_wait_seconds: 1
 
 delegation:
-  targets: [calendar, planner, checklist, other]
+  targets: [calendar, planner, checklist, gmail, other]
   clarify: >-
-    whether it is a Google Calendar event, a local planner block or a checklist
-    task, and the date, start and end time and title where they apply
+    the date, title and time range for a new scheduled entry, or identify the existing
+    entry to edit (keep its duration when only the start changes); Calendar and
+    timed planner entries are the same schedule; checklist tasks stay local
   receipt_types:
     calendar_event:
       verifier: calendar_event
@@ -84,7 +85,7 @@ delegation:
     planner_block:
       verifier: planner_block
       args: {helper: planner}
-      invalidates: [planner.today, planner.tomorrow]
+      invalidates: [calendar.today, calendar.next, planner.today, planner.tomorrow]
       format: '{"type":"planner_block","action":"added|moved|resized|renamed|removed","day":"YYYY-MM-DD","block_id":"<block id like b3>"}'
     checklist_task:
       verifier: checklist_task

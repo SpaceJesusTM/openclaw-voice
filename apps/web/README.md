@@ -13,3 +13,9 @@ a microphone. The orb and identity come from agent configuration so later
 multi-agent views can reuse them.
 
 Files: `index.html`, `style.css`, `app.js`. Browser test: `services/voice/probes/ui_probe.mjs`.
+
+Enable **Push to talk** for noisy rooms, then hold the button or Space outside the
+message field. Releasing, changing tabs or losing focus closes the microphone.
+Open-mic mode still supports natural interruption. Echo cancellation and noise
+suppression are requested; automatic gain is disabled to avoid boosting room noise.
+Offline mic-gate checks: `node --test apps/web/tests/microphone.test.cjs` from repo root.

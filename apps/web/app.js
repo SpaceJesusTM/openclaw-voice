@@ -295,7 +295,7 @@ function analyserFor(stream) {
 async function getMicrophone() {
   try {
     return await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
       video: false,
     });
   } catch (error) {
@@ -334,6 +334,7 @@ async function connect() {
     ui.audioCtx = ui.audioCtx || new AudioContext();
     await ui.audioCtx.resume();
     ui.stream = $("typed-only").checked ? silentStream() : await getMicrophone();
+    applyMicGate(false);
     ui.localAnalyser = $("typed-only").checked ? null : analyserFor(ui.stream);
     const start = await postJSON("/start", { transport: "webrtc", body: { agent: ui.agent.id } });
     const pc = new RTCPeerConnection({ iceServers: start.iceConfig?.iceServers || [] });
@@ -403,6 +404,7 @@ function dropped(message) {
 }
 
 function teardown() {
+  applyMicGate(false);
   clearInterval(ui.ping);
   stopLevels();
   try { ui.dc?.close(); } catch { /* ignore */ }
@@ -421,7 +423,10 @@ function setButtons() {
   $("connect").disabled = ui.connected || ui.connecting;
   $("connect").textContent = ui.connecting ? "Connecting…" : "Connect";
   $("disconnect").disabled = !ui.connected;
-  $("mute").disabled = !ui.connected || $("typed-only").checked;
+  $("mute").disabled = !ui.connected || $("typed-only").checked || $("ptt-mode").checked;
+  $("typed-only").disabled = ui.connected || ui.connecting;
+  $("push-talk").hidden = !$("ptt-mode").checked;
+  $("push-talk").disabled = !ui.connected || $("typed-only").checked;
   $("message").disabled = !ui.connected;
   $("send").disabled = !ui.connected;
 }
@@ -552,13 +557,44 @@ function onServerMessage(data) {
 $("connect").addEventListener("click", connect);
 $("disconnect").addEventListener("click", disconnect);
 $("typed-only").addEventListener("change", setButtons);
-$("mute").addEventListener("click", () => {
+let micMuted = false;
+let talkHeld = false;
+function applyMicGate(held = talkHeld) {
+  talkHeld = held;
   const track = ui.stream?.getAudioTracks()[0];
-  if (!track) return;
-  track.enabled = !track.enabled;
-  $("mute").textContent = track.enabled ? "Mute mic" : "Unmute mic";
-  $("mute").setAttribute("aria-pressed", String(!track.enabled));
+  if (track) track.enabled = !$("typed-only").checked && !micMuted && (!$("ptt-mode").checked || held);
+  $("push-talk").setAttribute("aria-pressed", String(held));
+  $("mute").textContent = micMuted ? "Unmute mic" : "Mute mic";
+  $("mute").setAttribute("aria-pressed", String(micMuted));
+}
+$("mute").addEventListener("click", () => { micMuted = !micMuted; applyMicGate(); });
+$("ptt-mode").addEventListener("change", () => { micMuted = false; applyMicGate(false); setButtons(); });
+$("push-talk").addEventListener("pointerdown", (event) => {
+  if (!ui.connected || $("push-talk").disabled) return;
+  event.preventDefault();
+  $("push-talk").setPointerCapture(event.pointerId);
+  applyMicGate(true);
 });
+for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+  $("push-talk").addEventListener(type, () => applyMicGate(false));
+}
+$("push-talk").addEventListener("keydown", (event) => {
+  if (["Space", "Enter"].includes(event.code) && !event.repeat && !$("push-talk").disabled) {
+    event.preventDefault(); applyMicGate(true);
+  }
+});
+$("push-talk").addEventListener("keyup", (event) => {
+  if (["Space", "Enter"].includes(event.code)) { event.preventDefault(); applyMicGate(false); }
+});
+$("push-talk").addEventListener("blur", () => applyMicGate(false));
+window.addEventListener("keydown", (event) => {
+  if (event.code !== "Space" || event.repeat || !ui.connected || !$("ptt-mode").checked ||
+      $("typed-only").checked || event.target.closest("input, textarea, select, button, [contenteditable]")) return;
+  event.preventDefault(); applyMicGate(true);
+});
+window.addEventListener("keyup", (event) => { if (event.code === "Space") applyMicGate(false); });
+window.addEventListener("blur", () => applyMicGate(false));
+document.addEventListener("visibilitychange", () => { if (document.hidden) applyMicGate(false); });
 $("composer").addEventListener("submit", (event) => {
   event.preventDefault();
   const text = $("message").value.trim();

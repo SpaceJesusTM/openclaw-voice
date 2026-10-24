@@ -1,27 +1,31 @@
 ---
 name: tari-day-planner
-description: "Manage Tari's opt-in local day planner, time blocks, commute blocks, and persistent checklist through bin/day-planner."
+description: "Manage the unified Calendar/day planner and persistent local checklist through bin/day-planner."
 user-invocable: false
 ---
 
 # Day planner
 
-Use this skill when the user clearly names their planner or checklist, or continues
-an unmistakable planner operation. An ordinary request for planning advice does
-not authorize changes. Words such as “urgent”, “schedule”, or “tomorrow” alone do
-not select the planner. Ask when the intended target is unclear.
+Use this skill for scheduling or planner/checklist requests. Read the Calendar
+skill too. Ordinary scheduling creates one Calendar event; no need to ask
+Calendar versus planner. Use `./bin/day-planner` for planner operations.
 
-Run `./bin/day-planner` for the full command reference. Use this helper for every
-planner read and mutation. Never edit planner Markdown by hand, reconstruct a
-planner from memory, or substitute a Calendar summary when the helper fails.
+All Calendar events appear live on their scheduled day, including all-day,
+shared and declined entries. Context-only/declined entries do not occupy busy
+time. Calendar identity is preserved in `show --json` (`calendar`, `id`).
+New `add`, `place` and `commute-add` commands create Calendar events directly,
+with private kind metadata, and return a verified `calendar_event` receipt.
+`move`, `rename`, `resize`, `remove` find both Calendar and legacy local entries;
+they update the same corresponding event. Use the returned Calendar receipt in
+CLAWVOICE_RECEIPT, even when the user called it a planner block.
+For recurring, all-day, multi-day and clock-change events use Calendar management
+with explicit scope instead. Never retry an uncertain write blindly; inspect first.
 
-The view has three separate kinds of entries:
-
-- Calendar entries come from the user's primary calendar and accepted shared
-  invitations, read live through `tari-google`. They provide schedule context;
-  they do not establish deadlines or prove that work is complete.
-- Planner blocks are local time blocks that never create Calendar events.
-- Commute blocks are local travel time that occupies time like a Planner block.
+Existing local blocks, especially Breakfast, are preserved and still editable
+locally. Never migrate or delete them automatically or link by matching a title.
+If a local block and Calendar event both match, ask for the unique ID. Explicit
+`--local-only` creates a new local block when the user requests that exception.
+Never edit Markdown by hand. Checklist tasks remain local.
 
 The categorized checklist persists across dates. Each task has a completion flag
 and an independent optional status: Priority, Start, or In-progress. The default
@@ -67,9 +71,8 @@ saved blocks or suggested priorities into checklist changes without authorizatio
 ## Calendar checks and overlap confirmation
 
 The helper reads Calendar commitments before adding, placing, moving, resizing,
-or creating commute blocks. It has no Calendar write command. Requests to create
-or modify a Calendar event belong to the existing native Calendar management
-skill. This planner adds no Calendar permission or proposal-token machinery.
+or creating commute blocks. New timed entries write Calendar using the existing
+separate Calendar write profile; legacy local entries remain local.
 
 An overlap returns exit 4 and writes nothing. Explain the specific conflicting
 items and obtain the user's confirmation before repeating with
@@ -101,9 +104,10 @@ short confirmation; show the full view when asked. If it fails, report the failu
 without inventing a replacement view. Translate backend errors into a short,
 useful explanation; do not paste raw stderr or identifiers into normal replies.
 
-State is local Markdown under `planner/`. It contains no Calendar cache. Planner
-blocks are plans, not externally confirmed commitments, and do not automatically
-create reminders or scheduled jobs. The optional `TARI_PLANNER_DIR` override is
+Legacy blocks and checklist state use local Markdown under `planner/`. There is
+no local Calendar mirror. New events store their planner/commute kind in private
+Calendar extended properties. Commute anchors set initial timing only; they are
+not a live dependency graph. The optional `TARI_PLANNER_DIR` override is
 for a separately isolated local state directory, including tests.
 
 In ClawVoice, this directory must remain inside the active demo workspace;

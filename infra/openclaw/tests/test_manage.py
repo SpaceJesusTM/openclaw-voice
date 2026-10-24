@@ -55,6 +55,20 @@ class FoundationBootstrapTests(unittest.TestCase):
         self.assertEqual(json.loads((self.root / ".local/state/openclaw.json").read_text()),
                          config)
 
+    def test_workspace_update_preserves_planner_and_refuses_custom_code(self):
+        manager.initialize("America/Toronto", "Demo", 19501)
+        plan = manager.LOCAL / "state/workspace/planner/days/2026-10-25.md"
+        plan.parent.mkdir(parents=True)
+        plan.write_text("Breakfast and local metadata\n")
+        manager.update_workspace()  # current templates are already installed
+        self.assertEqual(plan.read_text(), "Breakfast and local metadata\n")
+        custom = manager.LOCAL / "state/workspace/bin/day-planner"
+        custom.write_text(custom.read_text() + "\n# owner customization\n")
+        with self.assertRaisesRegex(RuntimeError, "Customized workspace file"):
+            manager.update_workspace()
+        self.assertEqual(plan.read_text(), "Breakfast and local metadata\n")
+        self.assertTrue(custom.read_text().endswith("# owner customization\n"))
+
     def test_reject_bad_port_and_name(self):
         with self.assertRaises(RuntimeError):
             manager.initialize("America/Toronto", "../production", 19501)

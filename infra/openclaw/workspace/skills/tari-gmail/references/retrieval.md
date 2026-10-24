@@ -6,10 +6,13 @@ no production account's mailbox behavior or backlog has been imported.
 
 ## Choose the scope before searching
 
-Honor an explicit user window, sender, category, or query. For an ordinary recent
-catch-up, start with the last day regardless of read state, excluding Promotions
-and Social. Do not silently restrict to Gmail's Primary category: consequential
-messages can be classified as Updates or other categories.
+Default to **Primary Inbox only**: `in:inbox category:primary`, including both
+read and unread. For “latest email”, search this scope with --max 1, then read
+that message by ID before summarizing its content. Do not impose a last-day
+window: the latest message may be older. Add `is:unread` only when explicitly
+requested. For broader user-requested queries (other categories, all mail,
+sent, archived, etc.), pass `--all-mail` with the exact requested query. Without
+that flag the wrapper always intersects the query with Primary Inbox.
 
 Use metadata first and start with a small page (for example 20). Open bodies only
 for plausible actions, deadlines, changes, or requested detail. A quick on-demand
@@ -17,7 +20,7 @@ brief may deliberately stop at a bounded page, but must then say it covered that
 bounded set and may omit other mail. It must never claim full inbox completeness.
 
 An older-unread sweep is optional, not part of every brief. When useful, search
-`is:unread older_than:1d -category:promotions -category:social` separately with a
+`is:unread older_than:1d` separately with a
 small page. Explicitly call it a sample if not fully paginated. Do not reread the
 entire backlog on each run or use unread-only searches for recent catch-ups.
 

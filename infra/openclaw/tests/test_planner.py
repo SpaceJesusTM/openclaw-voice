@@ -51,6 +51,8 @@ class PlannerTests(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0, json.dumps({"events": self.events, "complete": True}), "")
 
     def run_cli(self, *arguments):
+        if arguments[0] in ("add", "place", "commute-add"):
+            arguments = (*arguments, "--local-only")
         output, error = io.StringIO(), io.StringIO()
         with patch("sys.argv", ["day-planner", *arguments]), contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
             try:
@@ -128,7 +130,7 @@ class PlannerTests(unittest.TestCase):
         self.events = [event("Other person's appointment", calendar="shared@example.net")]
         code, out, _ = self.run_cli("show", "tomorrow", "--json")
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out)["schedule"], [])
+        self.assertFalse(json.loads(out)["schedule"][0]["counted"])
         self.events[0]["attendees"] = [{"self": True, "responseStatus": "accepted"}]
         self.assertEqual(self.run_cli("add", "tomorrow", "10:30-11:30", "Draft")[0], 4)
 
@@ -139,7 +141,7 @@ class PlannerTests(unittest.TestCase):
                                      attendees=[{"self": True, "responseStatus": response}])]
                 code, out, _ = self.run_cli("show", "tomorrow", "--json")
                 self.assertEqual(code, 0)
-                self.assertEqual(json.loads(out)["schedule"], [])
+                self.assertFalse(json.loads(out)["schedule"][0]["counted"])
                 self.assertEqual(self.run_cli("add", "tomorrow", "10:30-11:30", "Draft",
                                               "--count", "meeting")[0], 4)
                 self.assertFalse(self.day_path().exists())
@@ -160,7 +162,7 @@ class PlannerTests(unittest.TestCase):
         self.events = [event(attendees=[{"self": True, "responseStatus": "declined"}])]
         code, out, _ = self.run_cli("show", "tomorrow", "--json")
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out)["schedule"], [])
+        self.assertFalse(json.loads(out)["schedule"][0]["counted"])
         self.assertEqual(self.run_cli("add", "tomorrow", "10:30-11:30", "Draft", "--count", "meeting")[0], 4)
 
     def test_primary_calendar_flag_counts_account_alias_as_own(self):

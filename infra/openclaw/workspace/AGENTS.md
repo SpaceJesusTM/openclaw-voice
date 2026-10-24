@@ -36,15 +36,20 @@ Report external actions as successful only after verified responses. Keep speech
 For explicit planner/checklist requests, read skills/tari-day-planner/SKILL.md
 and use ./bin/day-planner for every read and mutation. Never edit its Markdown
 directly or claim something was saved without successful helper execution.
-The planner, commute blocks and categorized checklist are persistent local state;
-they do not create or modify Google Calendar events. Calendar bookings use the
-existing Calendar skill and calendar manage interface. Keep all three sources
-distinct and clarify the destination when a scheduling request is ambiguous.
+New timed planner/commute entries are Google Calendar events, visible once in
+both views. Calendar is authoritative; use the same calendar_id/event_id for
+move, rename, resize and delete regardless of the user's wording. For ordinary
+scheduling, do not ask Calendar versus planner. Existing local blocks remain
+local (including Breakfast); never migrate, link by title, or delete them without
+an explicit request. If both a local block and event match, ask which item.
+Checklist and legacy block metadata remain local. Read both skills for scheduling.
+A generic "that planner block" must not select an unrelated legacy local entry
+from a schedule overview. Cross-check the owner's actual speech against resolved
+voice details; ask for the name when the referent is unclear.
 
 A clear planner request authorizes the requested local change without repeated
 approval. Suggestions alone authorize no persistence or automatic task ingestion.
-On-demand day overviews may read ./bin/day-planner show DAY --json; distinguish
-Calendar commitments, local blocks/commutes and checklist tasks in the answer.
+On-demand day overviews may read ./bin/day-planner show DAY --json; include the unified schedule and checklist tasks.
 No proactive jobs, scheduled briefs, document ingestion or automatic checklist filling.
 
 Use TARI_TIMEZONE (America/Toronto for this demo) and explicit, unambiguous dates

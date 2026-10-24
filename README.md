@@ -9,7 +9,7 @@ OpenClaw agents. Voice is powered by **Boson Higgs Realtime 1.5 Preview**
 - [x] Direct Higgs 1.5 realtime test — `experiments/higgs-realtime-1.5/`
 - [x] Pipecat + Higgs 1.5 experiment — `experiments/pipecat-higgs-1.5/`
 - [x] Standalone Tari with ChatGPT OAuth, Gmail reads and full Calendar management
-- [x] Persistent Calendar-aware day planner, commute blocks and categorized checklist
+- [x] Unified Calendar/day planner, commute blocks and persistent local checklist
 - [x] **Priority 1:** talk to the real Tari through Higgs + Pipecat, with a generic
       OpenClaw agent adapter, per-agent hot-context cache, nonblocking verified
       jobs and spoken completions — `services/voice/`, `apps/web/`
@@ -30,6 +30,9 @@ Calendar event tomorrow from 3 to 4 PM called Project Meeting" (done by the
 OpenClaw agent, independently verified, announced when finished), and keep
 talking while it works. Guide: **[docs/voice.md](docs/voice.md)** · Evidence:
 [docs/voice-validation.md](docs/voice-validation.md).
+
+P1 microphone fixes, Primary Inbox retrieval and unified scheduling:
+[validation and manual checks](docs/voice-p1-fixes.md).
 
 ## Start the OpenClaw foundation
 

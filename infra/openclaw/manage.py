@@ -194,6 +194,46 @@ def install_planner() -> None:
     print(f"Installed planner: {len(plans)} workspace files changed; private state preserved.")
 
 
+def update_workspace() -> None:
+    """Upgrade known P1 templates only; back up files and never touch planner data."""
+    import hashlib
+    load_env()
+    known = {
+        'bin/tari-google': 'f50891ef7d368548801ce08b7c94ebe3a7b5082e9dc631af6b7b5dbeb68d3e52',
+        'bin/day-planner': 'e71872162ebc7683627ba82b6de915d2493710baf0caa8bffef618365258d477',
+        'AGENTS.md': '93c176901088aed8babf2212e7eeedf51baeadba1dac0dc6bb0948992499f5b3',
+        'TOOLS.md': '21d38358da6a33b1c07301c2e6c2db696d5ce1fb07e8efec3a60ef8c04278790',
+        'skills/tari-gmail/SKILL.md': '020db9e7728da8b744d8c71ceb989083b280dd7b4d1abdbfee2b5ced47adbac2',
+        'skills/tari-gmail/references/retrieval.md': '919cc0d73cc63ee28fe1fb349fbe2241b31e2c8f89fef9c0ae6de3ded638587d',
+        'skills/tari-calendar/SKILL.md': 'f8bab884852b9ac4dda75898cc3e51c6c8e7245997506591be0b856007fddb1c',
+        'skills/tari-day-planner/SKILL.md': '37f8c6b610f70027f080493d0d980f86eb5e8b425479ccc2783ed52a6c175639',
+    }
+    workspace = owned_path(LOCAL / "state/workspace")
+    plans = []
+    for relative, previous in known.items():
+        target = owned_path(workspace / relative)
+        old = target.read_text()
+        new = (ROOT / "workspace" / relative).read_text()
+        if old == new:
+            continue
+        if hashlib.sha256(old.encode()).hexdigest() != previous:
+            raise RuntimeError("Customized workspace file needs manual merge: " + relative +
+                               ". No files changed; planner state is preserved.")
+        plans.append((relative, target, old, new))
+    backup = LOCAL / "backups" / ("p1-fixes-" + secrets.token_hex(8))
+    for relative, target, old, new in plans:
+        write_if_absent(backup / relative, old)
+        if target.read_text() != old:
+            raise RuntimeError("Workspace changed during update; inspect backups before retrying")
+        temporary = target.with_name(".p1-update-" + secrets.token_hex(8))
+        try:
+            write_if_absent(temporary, new, 0o700 if relative.startswith("bin/") else 0o600)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    print(f"Updated {len(plans)} known workspace templates; backups saved locally; planner data untouched.")
+
+
 def compose_args(*command: str) -> tuple[list[str], dict[str, str]]:
     data = load_env()
     # Do not inherit production OpenClaw, Tari, Google or other model credentials.
@@ -288,7 +328,7 @@ def main() -> int:
     init.add_argument("--timezone", default="America/Toronto")
     init.add_argument("--name", default="Tari")
     init.add_argument("--port", type=int, default=DEFAULT_PORT)
-    for action in ("install-planner", "planner", "start", "stop", "status", "logs", "doctor", "openclaw", "gog", "google"):
+    for action in ("update-workspace", "install-planner", "planner", "start", "stop", "status", "logs", "doctor", "openclaw", "gog", "google"):
         sub.add_parser(action, add_help=action not in ("planner", "openclaw", "gog", "google"))
     speak = sub.add_parser("chat")
     speak.add_argument("prompt")
@@ -301,6 +341,11 @@ def main() -> int:
         return 0
     if args.action == "start":
         return run_compose("up", "-d", "--build", "--wait", "--wait-timeout", "90", "openclaw")
+    if args.action == "update-workspace":
+        if rest:
+            parser.error("Unexpected arguments")
+        update_workspace()
+        return 0
     if args.action == "install-planner":
         if rest:
             parser.error("Unexpected arguments")

@@ -104,12 +104,37 @@ class GoogleIntegrationTests(unittest.TestCase):
         self.assertNotIn("123456", out)
         self.assertNotIn("https://", out)
 
+    def test_broad_query_cannot_be_an_upstream_option(self):
+        status, out, err, run = self.invoke(["gmail", "search", "--all-mail", "--", "--account=other@example.test"], {})
+        self.assertEqual(status, 1)
+        self.assertEqual(out, "")
+        run.assert_not_called()
+
+    def test_security_alerts_and_two_factor_details_are_withheld(self):
+        for subject in ("New sign-in", "Two-factor backup codes", "Account security alert"):
+            status, out, err, _ = self.invoke(["gmail", "read", "message-a"],
+                {"message": {"id": "message-a", "subject": subject, "body": "123456 private details"}})
+            self.assertEqual(status, 0, err)
+            self.assertNotIn("123456", out)
+            self.assertNotIn("private details", out)
+            self.assertIn("security-related content withheld", out)
+
     def test_normal_mail_retains_content_and_removes_links(self):
         status, out, err, run = self.invoke(["gmail", "read", "message-a"], {"message": {"id": "message-a", "body": "Team lunch https://example.test"}})
         self.assertEqual(status, 0, err)
         self.assertIn("Team lunch", out)
         self.assertNotIn("https://", out)
         self.assertIn("--sanitize-content", run.call_args.args[0])
+
+    def test_primary_default_includes_read_mail_and_explicit_broad_scope(self):
+        for argv, expected in ((["gmail", "search", "--max", "1"], "in:inbox category:primary "),
+                               (["gmail", "search", "is:unread"], "in:inbox category:primary (is:unread)"),
+                               (["gmail", "search", "category:updates", "--all-mail"], "category:updates")):
+            status, out, err, run = self.invoke(argv, {"messages": []})
+            self.assertEqual(status, 0, err)
+            self.assertEqual(run.call_args.args[0][3], expected)
+            self.assertEqual(json.loads(out)["query"], expected)
+        self.assertNotIn("is:unread", self.invoke(["gmail", "search"], {"messages": []})[1])
 
     def test_malformed_mail_is_not_success(self):
         for args, response in ((["gmail", "search", "example"], {"unexpected": []}),
@@ -155,7 +180,10 @@ class GoogleIntegrationTests(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 status, out, err, run = self.invoke(["calendar", "manage", *arguments], {"id": "event-a"})
                 self.assertEqual(status, 0, err)
-                self.assertEqual(run.call_args.args, (["calendar", *arguments], "calendar"))
+                expected = ["calendar", *arguments]
+                if arguments[0] == "create":
+                    expected += ["--timezone", "UTC"]
+                self.assertEqual(run.call_args.args, (expected, "calendar"))
                 self.assertTrue(run.call_args.kwargs["calendar_management"])
                 self.assertTrue(json.loads(out)["untrusted_content"])
                 self.assertNotIn("verified", json.loads(out))

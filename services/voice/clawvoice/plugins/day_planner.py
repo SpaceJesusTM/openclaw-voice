@@ -103,6 +103,9 @@ def _item_view(item: dict) -> dict[str, Any]:
         view["end"] = hhmm(int(item.get("end", 0)))
     if item.get("free"):
         view["shows_as_free"] = True
+    if item.get("counted") is False:
+        view["context_only"] = True
+        view["when"] += " (Calendar context, not a commitment)"
     return view
 
 
@@ -224,7 +227,7 @@ async def calendar_next(ctx: ResolverContext, spec: TopicSpec) -> Resolved:
             complete = False
             warnings.append(f"Calendar could not be fully read for {day_label(day, ctx.tz, ctx.clock)}.")
         for item in data["schedule"]:
-            if item["kind"] != "calendar" or item.get("allday") or not item.get("start_at") or not item.get("end_at"):
+            if item["kind"] != "calendar" or item.get("counted") is False or item.get("allday") or not item.get("start_at") or not item.get("end_at"):
                 continue
             key = f"{item.get('id')}|{item.get('start_at')}"
             if key in seen:

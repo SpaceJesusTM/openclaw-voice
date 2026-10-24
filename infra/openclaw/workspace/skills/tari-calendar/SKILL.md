@@ -22,6 +22,15 @@ Use IDs from successful reads. Preserve source calendar, timezone, daylight-savi
 offsets and retrieval limitations. Shared calendars can be context rather than
 the user's commitments; do not assume attendance. A failed read is not free time.
 
+Calendar and the day planner are one schedule. For ordinary timed bookings,
+prefer day-planner add/move/rename/resize/remove (read its skill). It writes the
+same Calendar event; never also create a local copy. A direct Calendar change
+appears automatically in the planner. Preserve legacy local blocks without migration.
+Use America/Toronto and offset-bearing RFC3339 timestamps plus --timezone
+America/Toronto for timed writes. 2026-10-25 08:00 Toronto equals 12:00Z; never
+shift this UTC instant again. Respect DST and refuse ambiguous/nonexistent wall
+times. Do not change account or existing event timezone settings silently.
+
 ## Native Calendar management
 
 `calendar manage` forwards native gog Calendar commands and flags. This includes

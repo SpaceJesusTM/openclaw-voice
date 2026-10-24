@@ -88,6 +88,44 @@ The UI's Gateway badge shows `WebSocket (paired)` afterwards. Pairing requests
 expire after five minutes; ClawVoice re-requests on start, on reconnect and
 every ten minutes while it runs on HTTP. Revoke with `openclaw devices remove`.
 
+## Primary Inbox, unified schedule and microphone controls
+
+Email questions delegate to OpenClaw using its Gmail read-only helper. The
+default is `in:inbox category:primary`, including read and unread, without a
+last-day cutoff for "latest". Explicit unread or broader searches are honored.
+The broader helper switch is `gmail search QUERY --all-mail`. Security content
+is withheld before it reaches the agent; no codes or recovery links are spoken.
+
+Calendar and timed planner entries now refer to the same Calendar event. New
+planner bookings create no local mirror. Existing local blocks and checklist
+remain local; no automatic migration runs. See [planner.md](planner.md).
+
+ClawVoice now explicitly sends VAD threshold **0.90** and silence **600 ms**.
+The pinned Boson SDK/server default was 0.85 ([SDK changelog](https://github.com/boson-ai/pipecat-boson/blob/main/CHANGELOG.md)).
+Tune `BOSON_VAD_THRESHOLD` in `services/voice/.env` (e.g. 0.85 for quieter speech,
+0.95 for louder/noisier input), then reconnect; Boson fixes VAD at session start.
+The browser requests echo cancellation and noise suppression and disables
+automatic gain to avoid amplifying background noise. Browser/device support
+varies. Boson `BOSON_NOISE_REDUCTION=near_field|far_field` remains optional.
+
+For noisy environments, enable **Push to talk**, then hold the button or Space
+(outside text/button controls) while speaking. Release closes the microphone;
+blur/hidden-tab/pointer cancellation also closes it. Audio output and natural
+barge-in while held still use Pipecat/Boson. This gates the browser audio track;
+it is not a wake word or speaker recognition system. Nearby speech can still
+activate open-mic mode, so validate with your actual microphone and headphones.
+
+To update an existing isolated P1 demo safely:
+
+```sh
+python3 infra/openclaw/manage.py update-workspace
+# Upgrades known P1 templates with backups; refuses customized files for manual merge.
+# Never touches planner files, credentials, or production Tari.
+python3 infra/openclaw/manage.py start
+cd services/voice
+make dev
+```
+
 ## Using it
 
 The page shows the agent (name, role, colored orb), the verified model badge,
@@ -105,8 +143,8 @@ Things to try:
   checklist tasks?" — cached answers.
 - "Create a Calendar event tomorrow from 3 to 4 PM called Project Meeting." —
   real Calendar write, verified, announced.
-- "Add a planner block tomorrow at 2 PM for an hour called Deep work." / "Mark
-  Review prototype as in progress." — local planner/checklist changes.
+- "Schedule Deep work tomorrow from 2 to 3 PM." — one Calendar/planner entry.
+- "Mark Review prototype as in progress." — local checklist change.
 - While a task runs: "Also, what's on tomorrow's planner?" — answered at once.
 - "Did that finish?" — read from tracked job state. "Cancel that task." —
   explicit cancellation (speech interruption never cancels).
@@ -180,8 +218,8 @@ helpers:                           # trusted deterministic read helpers (argv, n
   google: ["{python}", "{repo}/infra/openclaw/manage.py", "google"]
 hot_context: {defaults: {...}, topics: [...]}
 delegation:
-  targets: [calendar, planner, checklist, other]
-  clarify: "whether it is a Calendar event, a planner block or a checklist task, ..."
+  targets: [calendar, planner, checklist, gmail, other]
+  clarify: "the date, times and title for the unified schedule, or the checklist task"
   receipt_types:
     calendar_event:
       verifier: calendar_event

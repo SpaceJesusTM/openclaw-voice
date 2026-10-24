@@ -50,6 +50,7 @@ try {
       gain.gain.value = 0.0003;
       hum.connect(gain).connect(destination);
       hum.start();
+      window.__micTrack = destination.stream.getAudioTracks()[0];
       return destination.stream;
     };
     window.__speakTestWav = async (base64) => {
@@ -68,6 +69,18 @@ try {
 
   await page.locator('#connect').click();
   await expect(page.locator('#model-badge')).toContainText('higgs-realtime-1.5-preview · verified', { timeout: 30000 });
+  await page.locator('#ptt-mode').check();
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(false);
+  await expect(page.locator('#push-talk')).toBeEnabled();
+  await page.locator('#push-talk').hover();
+  await page.mouse.down();
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(true);
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(false);
+  await page.locator('#ptt-mode').uncheck();
+  expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(true);
+  mark('push-to-talk-microphone-gate');
+
   await expect(page.locator('.turn.bot').first()).toBeVisible({ timeout: 30000 });
   mark('connect-and-model', { badge: await page.locator('#model-badge').innerText() });
 

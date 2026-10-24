@@ -78,8 +78,8 @@ class VoiceTools:
                     "title": {
                         "type": "string",
                         "description": (
-                            "Exact name of the one item being created, changed or removed (the event, block or "
-                            "task itself, as the user said it). Never a section, list or calendar name. Omit if none."
+                            "Expected name AFTER the change (use the NEW title for a rename); for deletion, the current name. The event, block or "
+                            "task itself, as the user said it. Never a section, list or calendar name. Omit if none."
                         ),
                     },
                     "date": {"type": "string", "description": "Local date YYYY-MM-DD, if any."},

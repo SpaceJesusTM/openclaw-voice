@@ -28,3 +28,8 @@ Full guide: [docs/voice.md](../../docs/voice.md) · Results:
 
 Private state (device key, job records) is in ignored `.local/`; sanitized
 traces and probe reports are in ignored `captures/`.
+
+P1 microphone/Gmail/schedule fixes: [validation and manual checks](../../docs/voice-p1-fixes.md).
+For an existing P1 demo, first run `python3 infra/openclaw/manage.py update-workspace`
+from the repo root, then restart the voice server. New timed planner entries are
+Calendar events; existing local blocks and checklist are preserved.
