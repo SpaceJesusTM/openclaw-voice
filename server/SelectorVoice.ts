@@ -4,11 +4,13 @@ import { SERVER, responseCancel, responseCreate, textItem, truncateItem, type Se
 import type { RealtimeSession } from "../src/realtime/RealtimeSession";
 
 /**
- * How long a cancelled response gets to send response.done. Higgs never sends
- * it for a response cancelled before its first audio, though the session is
- * free (probed 2026-10-24, tools/probe/cancelEarly.ts).
+ * Higgs never sends response.done for a response cancelled before its first
+ * audio, though the session is free (probed 2026-10-24,
+ * tools/probe/cancelEarly.ts). So a reply stopped that early is cancelled when
+ * its first audio arrives, which Higgs ends cleanly. This is only the fallback
+ * for a stopped response that never produces audio at all.
  */
-const CANCEL_GRACE_MS = 1500;
+const CANCEL_GRACE_MS = 4000;
 
 /**
  * One reply, through its whole life:
@@ -31,6 +33,8 @@ export interface Reply {
   fragments: { text: string; endMs: number }[];
   transcript: string;
   cancelled: boolean;
+  /** response.cancel has been sent for it. */
+  cancelSent: boolean;
   /** Re-requested once after the server failed it. */
   retried: boolean;
   askedAt: number;
@@ -104,6 +108,7 @@ export class SelectorVoice {
       fragments: [],
       transcript: "",
       cancelled: false,
+      cancelSent: false,
       retried: false,
       askedAt: 0,
       sent: 0,
@@ -132,8 +137,8 @@ export class SelectorVoice {
     r.cancelled = true;
     if (r.state === "queued") return this.end(r, "skipped");
     if (r.state === "done") return this.truncate(r);
-    // Requested: cancelled as soon as response.created binds it (see onEvent).
-    if (r.state === "live") this.session.send(responseCancel());
+    // Requested, or live with no audio yet: cancelled when its first audio arrives (see onEvent).
+    if (r.state === "live" && r.audio.length > 0) this.sendCancel(r);
     this.graceTimers.set(
       r,
       setTimeout(() => {
@@ -156,7 +161,6 @@ export class SelectorVoice {
       if (r && r.state === "requested") {
         r.responseId = id;
         r.state = "live";
-        if (r.cancelled) this.session.send(responseCancel());
       } else {
         this.log(`${this.name}: unrequested response ${id}; cancelling it`);
         this.session.send(responseCancel());
@@ -170,6 +174,7 @@ export class SelectorVoice {
       const pcm = decodeB64Pcm(String(e.delta ?? ""));
       r.audio.push(pcm);
       if (!r.cancelled) this.sink.audio(r, pcm);
+      else if (!r.cancelSent) this.sendCancel(r);
     } else if (e.type === SERVER.audioTranscriptLength) r.fragments.push({ text: String(e.delta ?? ""), endMs: Number(e.length_ms ?? 0) });
     else if (e.type === SERVER.audioTranscriptDone) r.transcript = String(e.transcript ?? "");
     else if (e.type === SERVER.responseDone) {
@@ -186,6 +191,11 @@ export class SelectorVoice {
       }
       this.end(r, status === "failed" ? "failed" : r.cancelled ? "cancelled" : "completed");
     }
+  }
+
+  private sendCancel(r: Reply): void {
+    r.cancelSent = true;
+    this.session.send(responseCancel());
   }
 
   private end(r: Reply, outcome: Exclude<Reply["outcome"], "">): void {

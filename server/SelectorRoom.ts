@@ -1,10 +1,12 @@
 import WebSocket from "ws";
 import { AGENT_NAMES, CALL_AGENT, OVERSEER_PROMPT, PERSONAS, parseCall, type AgentName } from "../src/agent/selectorAgents";
+import { LevelGate } from "../src/audio/LevelGate";
 import { CHUNK_SAMPLES, concat, msOf, samplesOf } from "../src/audio/pcm";
 import { MODEL, SERVER, functionCallOutput, responseCreate, textItem, type ServerEvent } from "../src/realtime/events";
 import { costOf, sumUsage } from "../src/realtime/pricing";
 import { RealtimeSession, type SessionLog } from "../src/realtime/RealtimeSession";
 import { buildSessionConfig } from "../src/realtime/sessionConfig";
+import { DEFAULT_LIVE_FEED } from "../src/room/LiveFeed";
 import { SelectorVoice, type Reply } from "./SelectorVoice";
 
 /**
@@ -24,6 +26,12 @@ const VAD = { type: "server_vad" as const, threshold: 0.85, prefix_padding_ms: 3
 const MIC_KEEP_SAMPLES = samplesOf(120_000);
 /** Chunks sent ahead of real time when a reply starts, to absorb network jitter. */
 const LEAD_CHUNKS = 2;
+/**
+ * Quiet this long inside your turn starts a held draft reply. Higgs takes
+ * 0.55-0.8 s to first audio, so waiting for the VAD's 700 ms before asking put
+ * every reply ~1.5 s after you stopped.
+ */
+const DRAFT_AFTER_MS = 200;
 
 /**
  * The agent selector demo, one per browser tab, after Boson's basic Pipecat
@@ -34,6 +42,13 @@ const LEAD_CHUNKS = 2;
  *   planner / coder / jester  audio out, manual turns. All three hear every
  *             turn (yours and each other's, as real audio); only the active
  *             one is asked to reply. Planner starts.
+ *
+ * Drafting early: at a 200 ms pause in your turn (a level gate on the mic),
+ * the active agent hears your turn so far and starts a reply that is held,
+ * not played. If you carry on talking it's cancelled unheard. When the VAD
+ * says your turn is over, the draft plays at once if it heard all your
+ * speech; otherwise it's dropped and the agent replies fresh. The VAD stays
+ * the one authority on when your turn ends.
  *
  * Wire protocol over the WebSocket:
  *   tab -> server  binary: mic PCM16 24 kHz
@@ -51,9 +66,19 @@ export class SelectorRoom {
   private mic: { at: number; pcm: Int16Array }[] = [];
   /** Samples of mic audio sent to the overseer: its VAD's timeline. */
   private micSamples = 0;
-  /** Mic audio before this sample has already gone to the agents. */
-  private micSentTo = 0;
+  /** Per agent: mic audio before this sample has already gone to it. */
+  private heardTo = new Map<AgentName, number>();
   private turn: { startMs: number; endMs?: number } | null = null;
+  /** Says which mic chunks are speech, for spotting pauses inside a turn. */
+  private gate = new LevelGate(DEFAULT_LIVE_FEED);
+  private quietMs = 0;
+  /** When, and up to which mic sample, you were last heard speaking. */
+  private lastSpeechAt = 0;
+  private lastSpeechSample = 0;
+  /** A held reply, started at a pause in your turn, not played yet. */
+  private draft: { reply: Reply; agent: AgentName; at: number } | null = null;
+  /** Per reply: when you stopped talking before it, to measure how fast it answered. */
+  private timing = new WeakMap<Reply, { stoppedAt: number; drafted: boolean; latencyMs?: number }>();
   /** Every word of yours shown so far, normalized. */
   private heard: string[] = [];
   /** The overseer's decision on this turn has already been retried once. */
@@ -126,6 +151,43 @@ export class SelectorRoom {
     this.micSamples += pcm.length;
     while (this.mic.length && this.mic[0].at + this.mic[0].pcm.length < this.micSamples - MIC_KEEP_SAMPLES) this.mic.shift();
     this.overseer.appendAudio(pcm);
+
+    if (this.gate.loud(pcm)) {
+      this.quietMs = 0;
+      this.lastSpeechAt = Date.now();
+      this.lastSpeechSample = this.micSamples;
+      if (this.draft) this.dropDraft("you kept talking");
+    } else {
+      this.quietMs += msOf(pcm.length);
+      if (this.turn && !this.draft && this.quietMs >= DRAFT_AFTER_MS && this.lastSpeechSample > samplesOf(this.turn.startMs)) this.startDraft();
+    }
+  }
+
+  /** You paused: the active agent hears your turn so far and starts a reply, held until your turn is over. */
+  private startDraft(): void {
+    const agent = this.active;
+    const v = this.voices.get(agent);
+    if (!v || !this.turn) return;
+    const to = this.micSamples;
+    void v.hear("(Note: the next audio is the user speaking.)", this.micSlice(this.turnFrom(agent), to)).catch((err) => this.fail(err));
+    this.heardTo.set(agent, to);
+    const reply = v.respond();
+    this.timing.set(reply, { stoppedAt: this.lastSpeechAt, drafted: true });
+    this.draft = { reply, agent, at: Date.now() };
+    this.log(`draft: ${agent} starts a held reply after ${this.quietMs} ms of quiet`);
+  }
+
+  private dropDraft(why: string): void {
+    const d = this.draft;
+    if (!d) return;
+    this.draft = null;
+    this.voices.get(d.agent)?.stop(d.reply);
+    this.log(`draft dropped: ${why} (${d.reply.audio.length ? "had" : "no"} audio yet, ${Date.now() - d.at} ms old)`);
+  }
+
+  /** Where this turn's audio starts for an agent: what it hasn't heard yet, from just before you started. */
+  private turnFrom(agent: AgentName): number {
+    return Math.max(this.heardTo.get(agent) ?? 0, samplesOf((this.turn?.startMs ?? 0) - 200));
   }
 
   /** A typed line: a user turn without audio. */
@@ -134,13 +196,14 @@ export class SelectorRoom {
     if (!line || !this.overseer || this.closed) return;
     this.log(`user typed: ${line}`);
     this.send({ type: "user", text: line, typed: true });
+    this.dropDraft("you typed");
     this.cut("you typed");
     const note = `(The user typed: "${line}")`;
     for (const v of this.voices.values()) void v.note(note);
     this.overseer.send(textItem(note));
     this.overseerRetried = false;
     if (!this.overseer.generating) this.overseer.send(responseCreate());
-    this.reply(this.active);
+    this.reply(this.active, undefined, { stoppedAt: Date.now(), drafted: false });
   }
 
   /** You clicked an agent's tile: switch without asking the overseer. */
@@ -150,7 +213,7 @@ export class SelectorRoom {
   }
 
   diag(report: Record<string, unknown>): void {
-    this.log(`diag page=${JSON.stringify(report)} server=${JSON.stringify({ active: this.active, playing: !!this.current, queuedMs: msOf(this.queued.length), turn: this.turn })}`);
+    this.log(`diag page=${JSON.stringify(report)} server=${JSON.stringify({ active: this.active, playing: !!this.current, queuedMs: msOf(this.queued.length), turn: this.turn, draft: !!this.draft, gate: this.gate.last })}`);
   }
 
   private onOverseer(e: ServerEvent): void {
@@ -159,6 +222,7 @@ export class SelectorRoom {
       this.turn = { startMs: Number(e.audio_start_ms ?? msOf(this.micSamples)) };
       this.send({ type: "hearing", on: true });
       // Barge-in: you talking over the agent stops it, as in Pipecat.
+      this.dropDraft("new turn");
       this.cut("you spoke");
     } else if (e.type === SERVER.speechStopped) {
       if (this.turn) this.turn.endMs = Number(e.audio_end_ms ?? msOf(this.micSamples));
@@ -194,17 +258,37 @@ export class SelectorRoom {
     }
   }
 
-  /** The overseer's VAD ended your turn: every agent hears it, the active one replies. */
+  /**
+   * The overseer's VAD ended your turn: every agent hears it, and the active
+   * one replies. A held draft plays now: it still exists only if the mic gate
+   * heard no speech after it started (speech drops it).
+   */
   private onUserTurn(): void {
-    const turn = this.turn ?? { startMs: msOf(this.micSentTo) };
+    const turn = this.turn ?? { startMs: msOf(this.lastSpeechSample) };
+    const endMs = turn.endMs ?? msOf(this.micSamples);
+    const to = Math.min(this.micSamples, samplesOf(endMs));
+    const d = this.draft;
+    const keep = d !== null && d.agent === this.active;
+    if (d && !keep) this.dropDraft("the active agent changed");
+    this.log(`turn end: vad says ${Math.round(endMs)} ms, gate last heard speech at ${msOf(this.lastSpeechSample)} ms, ${Date.now() - this.lastSpeechAt} ms ago`);
+    for (const v of this.voices.values()) {
+      // The drafting agent already heard your speech; the rest is silence.
+      if (!(keep && v.name === this.active)) {
+        void v.hear("(Note: the next audio is the user speaking.)", this.micSlice(this.turnFrom(v.name), to)).catch((err) => this.fail(err));
+      }
+      this.heardTo.set(v.name, Math.max(this.heardTo.get(v.name) ?? 0, to));
+    }
     this.turn = null;
-    const from = Math.max(this.micSentTo, samplesOf(turn.startMs - 200));
-    const to = Math.min(this.micSamples, samplesOf(turn.endMs ?? msOf(this.micSamples)));
-    const samples = this.micSlice(from, to);
-    this.micSentTo = Math.max(this.micSentTo, to);
-    this.log(`user turn ${msOf(samples.length)} ms -> agents; ${this.active} replies`);
-    for (const v of this.voices.values()) void v.hear("(Note: the next audio is the user speaking.)", samples).catch((err) => this.fail(err));
-    this.reply(this.active);
+    if (keep && d) {
+      this.draft = null;
+      if (this.current) this.cut("new reply");
+      this.current = d.reply;
+      this.queued = concat(d.reply.audio);
+      this.log(`user turn over: ${this.active}'s draft plays (${msOf(this.queued.length)} ms of audio ready)`);
+    } else {
+      this.log(`user turn over: ${this.active} replies fresh`);
+      this.reply(this.active, undefined, { stoppedAt: this.lastSpeechAt, drafted: false });
+    }
   }
 
   private switchTo(agent: AgentName, reason: string, by: "overseer" | "you"): void {
@@ -214,23 +298,29 @@ export class SelectorRoom {
     }
     const from = this.active;
     this.log(`switch ${from} -> ${agent} (${by}: ${reason})`);
+    this.dropDraft(`${agent} takes over`);
     this.cut(`${agent} takes over`);
     this.active = agent;
     this.send({ type: "active", name: agent, from, reason, by });
     if (by === "you") this.overseer?.send(textItem(`(Note: the user switched to ${agent}. ${agent} is talking with the user now.)`));
     this.reply(
       agent,
+      // A short opener says who's taking over, so a swap sounds like someone stepping in, not a glitch.
       `(Note: you have the floor now${by === "you" ? ", the user picked you" : ""}; ${from} has gone quiet. ` +
-        `Reply to the last thing said in the conversation, as ${agent}. Don't mention any overseer.)`,
+        `You're stepping in, so open with a few words like "I can help with that" or "Ooh, that's my area", in your own style, ` +
+        `then reply to the last thing the user said, as ${agent}. Don't mention any overseer.)`,
+      by === "overseer" ? { stoppedAt: this.lastSpeechAt, drafted: false } : undefined,
     );
   }
 
-  private reply(agent: AgentName, note?: string): void {
+  /** `answers`: when you stopped talking, if this reply answers you (for the latency log). */
+  private reply(agent: AgentName, note?: string, answers?: { stoppedAt: number; drafted: boolean }): void {
     const v = this.voices.get(agent);
     if (!v) return;
     if (this.current) this.cut("new reply");
     this.queued = new Int16Array(0);
     this.current = v.respond(note);
+    if (answers) this.timing.set(this.current, answers);
   }
 
   /** Only the current reply's audio is played. */
@@ -262,7 +352,12 @@ export class SelectorRoom {
     const chunks = r.sent === 0 ? LEAD_CHUNKS : 1;
     for (let i = 0; i < chunks && this.queued.length > 0; i++) {
       if (r.sent === 0) {
-        this.log(`${r.agent} audible ${Date.now() - r.askedAt} ms after response.create`);
+        const t = this.timing.get(r);
+        if (t) t.latencyMs = Date.now() - t.stoppedAt;
+        this.log(
+          `${r.agent} audible ${Date.now() - r.askedAt} ms after response.create` +
+            (t ? `, ${t.latencyMs} ms after you stopped talking (${t.drafted ? "draft" : "fresh"})` : ""),
+        );
         this.send({ type: "speaking", name: r.agent });
       }
       const chunk = this.queued.subarray(0, CHUNK_SAMPLES);
@@ -280,10 +375,10 @@ export class SelectorRoom {
   private finish(r: Reply, cutOff: boolean): void {
     this.send({ type: "speaking", name: null });
     const playedMs = msOf(r.sent);
-    const text = (cutOff ? r.fragments.filter((f) => f.endMs <= playedMs).map((f) => f.text).join("") : r.transcript || r.fragments.map((f) => f.text).join("")).trim();
+    const text = (cutOff ? heardText(r.fragments, playedMs) : r.transcript || r.fragments.map((f) => f.text).join("")).trim();
     if (r.sent === 0 && !text) return;
     this.log(`${r.agent} said${cutOff ? " (cut off)" : ""}: ${text}`);
-    this.send({ type: "said", name: r.agent, text: text || "…", cut: cutOff });
+    this.send({ type: "said", name: r.agent, text: text || "…", cut: cutOff, latencyMs: this.timing.get(r)?.latencyMs });
     const heard = concat(r.audio).subarray(0, r.sent);
     for (const v of this.voices.values()) {
       if (v.name !== r.agent) void v.hear(`(Note: the next audio is ${r.agent} speaking${cutOff ? ", cut off" : ""}.)`, heard).catch((err) => this.fail(err));
@@ -370,4 +465,27 @@ function newWords(shown: string[], transcript: string): string {
   let k = 0;
   while (k < raw.length && seen < j) seen += words(raw[k++]).length;
   return raw.slice(k).join(" ");
+}
+
+/**
+ * The words of a reply heard before it was cut at `playedMs`. Fragments are
+ * whole clauses (`endMs` is where each ends in the audio, probed 2026-10-24),
+ * often 4 s or more, so the one playing at the cut is included in proportion
+ * to how much of it was heard.
+ */
+function heardText(fragments: { text: string; endMs: number }[], playedMs: number): string {
+  let out = "";
+  let prevEnd = 0;
+  for (const f of fragments) {
+    if (f.endMs <= playedMs) out += f.text;
+    else {
+      const share = (playedMs - prevEnd) / Math.max(1, f.endMs - prevEnd);
+      const ws = f.text.trim().split(/\s+/);
+      const n = Math.floor(ws.length * share);
+      if (n > 0) out += `${f.text.startsWith(" ") ? " " : ""}${ws.slice(0, n).join(" ")}…`;
+      break;
+    }
+    prevEnd = f.endMs;
+  }
+  return out;
 }

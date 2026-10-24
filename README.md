@@ -48,10 +48,14 @@ Double-click **`selector.bat`**, or open http://localhost:3000/selector.html.
   drives everyone. Agents run manual turns. A failed overseer decision
   (1.5's occasional `upstream_error`) is retried once.
 - Talking over an agent cuts it off. A switch cuts the old agent and the new one replies.
-- Measured 2026-10-24: an agent is audible ~0.5–0.8 s after it's asked; after a
-  switch, ~1.3–2.3 s. The overseer decides 0.5–1.9 s after you stop, so the old
-  agent is sometimes heard for a moment before it's cut. A failed agent reply is
-  retried once, about 2 s later.
+- Agents draft early: at a 200 ms pause the active agent starts a held reply,
+  played once your turn is over and dropped unheard if you keep talking.
+  Measured 2026-10-24: same-agent replies are heard **0.9–1.45 s** after you stop
+  (each line in the page shows its time). Swaps take 3.2–4.2 s, because the
+  overseer decides 0.5–1.9 s after you stop, and the old agent is heard briefly
+  before it's cut. A swapped-in agent opens with something like "I can help with that".
+- A failed agent reply is retried once, about 2 s later.
+- How the silent overseer works, and everything learned building it: [docs/silent-overseer.md](docs/silent-overseer.md).
 - `npx tsx tools/probe/selectorClient.ts [port]` talks to it with synthesized speech and prints what happens.
 
 ## Models

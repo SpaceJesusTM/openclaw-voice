@@ -13,6 +13,7 @@ import { loadApiKey, synthesize } from "../../src/audio/tts";
 const port = Number(process.argv[2] ?? 3000);
 const LINES = [
   "Hey, can I talk to the coder? My Python loop prints the same number every time.",
+  "Got it. And what should I check first?",
   "Okay, that makes sense. Now tell me a joke about that bug.",
   "Ha, nice one. Honestly my day has been pretty long.",
   "Ha. Coder, quick one: what did I say my loop was doing?",

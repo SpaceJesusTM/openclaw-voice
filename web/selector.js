@@ -137,7 +137,7 @@ function connect() {
     else if (msg.type === "speaking") onSpeaking(msg.name);
     else if (msg.type === "hearing") onHearing(msg.on);
     else if (msg.type === "user") addLine("you", msg.text, { typed: msg.typed });
-    else if (msg.type === "said") addLine(msg.name, msg.text, { cut: msg.cut });
+    else if (msg.type === "said") addLine(msg.name, msg.text, { cut: msg.cut, latencyMs: msg.latencyMs });
     else if (msg.type === "overseer") addDecision(msg);
     else if (msg.type === "clear") playback?.port.postMessage("clear");
     else if (msg.type === "usage") showUsage(msg);
@@ -232,13 +232,18 @@ function addDecision(d) {
   els.decisions.scrollTop = els.decisions.scrollHeight;
 }
 
-function addLine(who, text, { cut = false, typed = false } = {}) {
+function addLine(who, text, { cut = false, typed = false, latencyMs } = {}) {
   const li = document.createElement("li");
   li.className = `said${cut ? " cut" : ""}`;
   li.style.setProperty("--c", COLORS[who] ?? "var(--muted)");
-  li.innerHTML = `<span class="who"></span><span class="text"></span>`;
+  li.innerHTML = `<span class="who"></span><span class="text"></span><time></time>`;
   li.querySelector(".who").textContent = who === "you" ? (typed ? "you (typed)" : "you") : who;
   li.querySelector(".text").textContent = text;
+  // How long after you stopped talking this reply was first heard (server side).
+  if (latencyMs != null) {
+    li.querySelector("time").textContent = `${(latencyMs / 1000).toFixed(2)} s`;
+    li.querySelector("time").title = "From when you stopped talking to this reply's first audio";
+  }
   append(li);
 }
 
