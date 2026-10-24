@@ -151,6 +151,15 @@ export class RealtimeSession {
     throw new Error(`${this.name}: commit kept colliding with generation`);
   }
 
+  /**
+   * Stop treating this session as generating. Only for a response cancelled
+   * before its first audio: Higgs never sends its response.done, though the
+   * session is free (probed 2026-10-24, tools/probe/cancelEarly.ts).
+   */
+  markIdle(): void {
+    this.generating = false;
+  }
+
   /** session.update, resolved when acknowledged. */
   async update(session: Record<string, unknown>): Promise<void> {
     const ack = this.waitFor((e) => e.type === SERVER.sessionUpdated || e.type === SERVER.error, 8_000, "session.updated");

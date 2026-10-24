@@ -30,6 +30,18 @@ The table above is from `higgs-realtime`. The 1.5 preview was rejected (*"not av
 | `timing` | Same shape: about 9.6× real time, and the full text arrives about 27 s before playback ends. |
 | `mind` | It still picks the right tool when it answers, but **decisions take 0.6–1.5 s** (up from 0.5–0.6 s). It **writes a spoken-style filler sentence** before the call ("I need to correct that.") even when told not to. And **2 of 6 responses failed server-side** with `upstream_error` (status `failed`, no output). The agent's mind retries a failed response once. |
 
+## Agent selector probes, 2026-10-24
+
+From `tools/probe/vadToggle.ts` and `tools/probe/cancelEarly.ts`.
+
+| Check | Result |
+|---|---|
+| VAD toggle | `turn_detection` **can't change after session start**: *"turn_detection cannot be changed after session start"*. Pick it at connect time. |
+| VAD on a text session | Works. A text-mode session with `server_vad` emits `speech_started` / `committed` and auto-creates a response, which calls a tool (Higgs 1, ~0.5 s after commit). It sometimes writes a sentence of text first. |
+| `response.cancel` after audio started | Ends with `response.done`, status `cancelled`. |
+| `response.cancel` before any audio | `response.created` arrives but **`response.done` never does**, and `generating` stays true. The session is actually free: a commit sent afterwards is accepted. Treat it as idle after a short wait. |
+| Input transcription | `transcription.completed` sometimes replays every earlier user turn, not just the new item. |
+
 ## What this means for the design
 
 - **Model name:** use `higgs-realtime`, configurable with `BOSON_REALTIME_MODEL`.

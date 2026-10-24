@@ -1,0 +1,201 @@
+import type { AgentName, Persona } from "../src/agent/selectorAgents";
+import { CHUNK_SAMPLES, decodeB64Pcm, msOf } from "../src/audio/pcm";
+import { SERVER, responseCancel, responseCreate, textItem, truncateItem, type ServerEvent } from "../src/realtime/events";
+import type { RealtimeSession } from "../src/realtime/RealtimeSession";
+
+/**
+ * How long a cancelled response gets to send response.done. Higgs never sends
+ * it for a response cancelled before its first audio, though the session is
+ * free (probed 2026-10-24, tools/probe/cancelEarly.ts).
+ */
+const CANCEL_GRACE_MS = 1500;
+
+/**
+ * One reply, through its whole life:
+ *
+ *   queued     waiting behind this agent's earlier operations
+ *   requested  response.create sent, response.created not seen yet
+ *   live       bound to a response id; audio arriving
+ *   done       ended: completed, cancelled, failed, or skipped before it was requested
+ *
+ * Generated faster than real time; the room plays it and counts `sent`.
+ */
+export interface Reply {
+  readonly agent: AgentName;
+  state: "queued" | "requested" | "live" | "done";
+  /** How it ended. */
+  outcome: "" | "completed" | "cancelled" | "failed" | "skipped" | "abandoned";
+  responseId: string;
+  itemId: string;
+  audio: Int16Array[];
+  fragments: { text: string; endMs: number }[];
+  transcript: string;
+  cancelled: boolean;
+  askedAt: number;
+  /** Samples the room has played of it. */
+  sent: number;
+  /** Resolves when the reply is done. */
+  readonly ended: Promise<void>;
+}
+
+export interface VoiceSink {
+  /** Audio of a reply that hasn't been cancelled. */
+  audio(r: Reply, pcm: Int16Array): void;
+  /** The reply is done (any outcome). */
+  ended(r: Reply): void;
+}
+
+/**
+ * One agent's voice session, with manual turns. All operations on it are
+ * queued, because a commit is rejected while it's generating.
+ *
+ * One listener for the session's lifetime routes every response event to the
+ * reply it belongs to, by response id. Events from any other response (late
+ * ones from a reply already given up on) are ignored, and a response nobody
+ * asked for is cancelled. So a cut reply can never touch the next one.
+ */
+export class SelectorVoice {
+  private chain: Promise<unknown> = Promise.resolve();
+  /** The reply that owns the session's response: requested or live. At most one. */
+  private inflight: Reply | null = null;
+  private finishers = new Map<Reply, () => void>();
+  private graceTimers = new Map<Reply, NodeJS.Timeout>();
+
+  constructor(
+    readonly persona: Persona,
+    readonly session: RealtimeSession,
+    private sink: VoiceSink,
+    private log: (msg: string) => void,
+  ) {
+    session.on((e) => this.onEvent(e));
+  }
+
+  get name(): AgentName {
+    return this.persona.name;
+  }
+
+  /** Commit audio as a user item, labelled with who was talking. */
+  hear(label: string, samples: Int16Array): Promise<void> {
+    return this.queue(async () => {
+      if (samples.length === 0) return;
+      this.session.send(textItem(label));
+      for (let i = 0; i < samples.length; i += CHUNK_SAMPLES) this.session.appendAudio(samples.subarray(i, i + CHUNK_SAMPLES));
+      await this.session.commit();
+    });
+  }
+
+  /** A text message in the conversation, in order with the audio. */
+  note(text: string): Promise<void> {
+    return this.queue(async () => this.session.send(textItem(text)));
+  }
+
+  /** Ask for a reply, after an optional stage direction. Returns at once; audio goes to the sink. */
+  respond(note?: string): Reply {
+    let finish!: () => void;
+    const r: Reply = {
+      agent: this.name,
+      state: "queued",
+      outcome: "",
+      responseId: "",
+      itemId: "",
+      audio: [],
+      fragments: [],
+      transcript: "",
+      cancelled: false,
+      askedAt: 0,
+      sent: 0,
+      ended: new Promise<void>((res) => (finish = res)),
+    };
+    this.finishers.set(r, finish);
+    void this.queue(async () => {
+      if (r.state === "done") return; // stopped while queued
+      if (note) this.session.send(textItem(note));
+      r.state = "requested";
+      r.askedAt = Date.now();
+      this.inflight = r;
+      this.session.send(responseCreate());
+      await r.ended;
+    });
+    return r;
+  }
+
+  /**
+   * Stop a reply at `sent` samples played. Queued: it's skipped. Requested or
+   * live: its response is cancelled. Either way the agent's memory is
+   * truncated to what was actually played.
+   */
+  stop(r: Reply): void {
+    if (r.cancelled) return;
+    r.cancelled = true;
+    if (r.state === "queued") return this.end(r, "skipped");
+    if (r.state === "done") return this.truncate(r);
+    // Requested: cancelled as soon as response.created binds it (see onEvent).
+    if (r.state === "live") this.session.send(responseCancel());
+    this.graceTimers.set(
+      r,
+      setTimeout(() => {
+        if (r.state === "done") return;
+        this.log(`${this.name}: no response.done ${CANCEL_GRACE_MS} ms after cancel (${r.state}); treating the session as idle`);
+        this.session.markIdle();
+        this.end(r, "abandoned");
+      }, CANCEL_GRACE_MS),
+    );
+  }
+
+  private onEvent(e: ServerEvent): void {
+    const r = this.inflight;
+    if (e.type === "__closed") {
+      if (r) this.end(r, "failed");
+      return;
+    }
+    if (e.type === SERVER.responseCreated) {
+      const id = String((e.response as { id?: string } | undefined)?.id ?? "");
+      if (r && r.state === "requested") {
+        r.responseId = id;
+        r.state = "live";
+        if (r.cancelled) this.session.send(responseCancel());
+      } else {
+        this.log(`${this.name}: unrequested response ${id}; cancelling it`);
+        this.session.send(responseCancel());
+      }
+      return;
+    }
+    const id = String(e.response_id ?? (e.response as { id?: string } | undefined)?.id ?? "");
+    if (!r || r.state !== "live" || !id || id !== r.responseId) return;
+    if (e.type === SERVER.outputItemAdded && !r.itemId) r.itemId = String((e.item as { id?: string })?.id ?? "");
+    else if (e.type === SERVER.outputAudioDelta) {
+      const pcm = decodeB64Pcm(String(e.delta ?? ""));
+      r.audio.push(pcm);
+      if (!r.cancelled) this.sink.audio(r, pcm);
+    } else if (e.type === SERVER.audioTranscriptLength) r.fragments.push({ text: String(e.delta ?? ""), endMs: Number(e.length_ms ?? 0) });
+    else if (e.type === SERVER.audioTranscriptDone) r.transcript = String(e.transcript ?? "");
+    else if (e.type === SERVER.responseDone) {
+      const status = String((e.response as { status?: string } | undefined)?.status ?? "");
+      this.end(r, status === "failed" ? "failed" : r.cancelled ? "cancelled" : "completed");
+    }
+  }
+
+  private end(r: Reply, outcome: Exclude<Reply["outcome"], "">): void {
+    if (r.state === "done") return;
+    r.state = "done";
+    r.outcome = outcome;
+    if (this.inflight === r) this.inflight = null;
+    clearTimeout(this.graceTimers.get(r));
+    this.graceTimers.delete(r);
+    if (r.cancelled) this.truncate(r);
+    this.finishers.get(r)?.();
+    this.finishers.delete(r);
+    this.sink.ended(r);
+  }
+
+  /** Forget what was never heard, so the agent doesn't think it said it. */
+  private truncate(r: Reply): void {
+    if (r.itemId) this.session.send(truncateItem(r.itemId, msOf(r.sent)));
+  }
+
+  private queue(fn: () => Promise<void>): Promise<void> {
+    const run = this.chain.then(fn);
+    this.chain = run.catch(() => undefined);
+    return run;
+  }
+}

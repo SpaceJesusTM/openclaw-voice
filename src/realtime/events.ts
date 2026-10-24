@@ -126,6 +126,11 @@ export function responseCreate(overrides?: ResponseOverrides): ClientEvent {
   return overrides ? { type: "response.create", response: overrides } : { type: "response.create" };
 }
 
+/** Stop the response in progress. It ends with response.done, status "cancelled" (probed 2026-10-24). */
+export function responseCancel(): ClientEvent {
+  return { type: "response.cancel" };
+}
+
 /** One chunk of PCM16 24 kHz audio, base64. ~100 ms per chunk. */
 export function inputAudioAppend(base64: string): ClientEvent {
   return { type: "input_audio_buffer.append", audio: base64 };

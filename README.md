@@ -31,6 +31,25 @@ npm run web
 Set up 2–4 agents (role, goal, facts they'll defend, voice, model), describe
 the situation, then talk or type to join in.
 
+## Agent selector demo
+
+A simpler, Pipecat-style demo (after Boson's
+[basic Pipecat integration](https://docs.boson.ai/models/higgs-realtime/integrations/pipecat)):
+you talk to **planner**, **coder** and **jester**, one at a time. A silent
+**overseer** listens to every turn you take and has one tool, `call_agent`,
+that hands the conversation to whoever fits. The others are sidelined: quiet,
+but they hear everything as real audio, so whoever takes over knows the
+conversation. Planner starts. Click a tile to switch yourself.
+
+Double-click **`selector.bat`**, or open http://localhost:3000/selector.html.
+
+- The overseer is a text-only session (Higgs 1) with server VAD: it never makes
+  a sound, and its turn detection drives everyone. Agents (Higgs 1.5) run manual turns.
+- Talking over an agent cuts it off. A switch cuts the old agent and the new one replies.
+- Measured 2026-10-24: an agent is audible ~0.5–0.8 s after it's asked; after a
+  switch, ~2.1 s (still being looked into). The overseer decides ~0.5 s after you stop.
+- `npx tsx tools/probe/selectorClient.ts [port]` talks to it with synthesized speech and prints what happens.
+
 ## Models
 
 Each agent picks **1.5 voice · 1 mind** (recommended), **Higgs 1.5**, or **Higgs 1**:

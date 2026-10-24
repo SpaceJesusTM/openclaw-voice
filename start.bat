@@ -3,11 +3,13 @@ rem Voice Room launcher: checks Node, installs dependencies, checks the API key,
 rem starts the server and opens http://localhost:3000 in your browser.
 rem Set NO_BROWSER=1 to skip opening the browser. Set PORT to use another port.
 rem Set PRESET to open with a preset selected (demo-thoughts.bat does).
+rem Set PAGE to open another page, e.g. selector.html (selector.bat does).
 setlocal
 cd /d "%~dp0"
 if not defined PORT set PORT=3000
 set URL=http://localhost:%PORT%/
 if defined PRESET set URL=http://localhost:%PORT%/?preset=%PRESET%
+if defined PAGE set URL=http://localhost:%PORT%/%PAGE%
 
 where node >nul 2>nul
 if errorlevel 1 (

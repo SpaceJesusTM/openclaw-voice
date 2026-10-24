@@ -13,6 +13,13 @@ class Playback extends AudioWorkletProcessor {
     this.playing = false;
     this.port.onmessage = (e) => {
       const d = e.data;
+      // "clear": drop everything buffered, e.g. when the speaker is cut off.
+      if (d === "clear") {
+        this.r = this.w;
+        this.count = 0;
+        this.playing = false;
+        return;
+      }
       for (let i = 0; i < d.length; i++) {
         this.buf[this.w] = d[i];
         this.w = (this.w + 1) % this.buf.length;
