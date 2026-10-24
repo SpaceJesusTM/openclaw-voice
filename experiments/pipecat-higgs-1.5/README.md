@@ -6,13 +6,18 @@ WebRTC playground, and Boson speech-to-speech service. Step 1 is preserved in
 
 ## Start locally
 
-From the repository root, with Python 3.11 and npm available:
+From the repository root, with Python 3 available, on macOS, Linux, or Windows:
 
 ```sh
 cd experiments/pipecat-higgs-1.5
-make setup
-make dev
+python tasks.py setup
+python tasks.py dev
 ```
+
+`tasks.py` uses only the standard library and handles platform differences
+(`.bootstrap/bin` vs `.bootstrap\Scripts`, UTF-8 console output on Windows). Use
+`python3` where `python` is not on the PATH. With `make` installed, `make setup`,
+`make dev`, and the other targets below are aliases for the same tasks.
 
 Open **http://127.0.0.1:7860**, leave **SmallWebRTC** selected, allow microphone
 access, let devices initialize, then click **Connect**. Wait for the greeting.
@@ -21,9 +26,11 @@ initialization completes.
 Use the text box for a typed prompt or speak into the microphone. The runner
 ships the browser UI; this experiment adds no frontend audio implementation.
 
-`make setup` installs uv 0.13.5 into ignored `.bootstrap/` and syncs the committed
-`uv.lock`. If uv is already available, `uv sync --locked --python 3.11` and
-`uv run --locked bot.py -t webrtc --host 127.0.0.1 --port 7860` are equivalent.
+`setup` installs uv 0.13.5 into ignored `.bootstrap/`, lets uv download Python
+3.11 into `.bootstrap/python`, and syncs the committed `uv.lock`. If uv is already
+available, `uv sync --locked --python 3.11` and
+`uv run --locked bot.py -t webrtc --host 127.0.0.1 --port 7860` are equivalent;
+on Windows, also set `PYTHONUTF8=1` for any other Python commands you run directly.
 Runtime versions are **pipecat-ai 1.12.0** and **pipecat-boson 0.1.4**. Do not
 upgrade Pipecat to 1.13 with this integration: its invocation API is incompatible.
 
@@ -43,15 +50,16 @@ session acknowledgements in the playground's server-message events.
 ## Test
 
 ```sh
-make check              # Offline tests, Ruff, Python compilation; no API calls
-make live-probe         # In another terminal while make dev is running
+python tasks.py check        # Offline tests, Ruff, Python compilation; no API calls
+python tasks.py live-probe   # In another terminal while dev is running
 ```
 
 The headless probe uses the same `/start`, WebRTC audio, and RTVI channel as the
 playground. It requires the exact resolved model, decoded non-silent media,
 completed spoken turns, and a real `get_demo_planner` result followed by a reply
 using the first fixture title. Timeouts, unexpected disconnects, and missing
-evidence fail with a nonzero exit status. `probe.py --help` makes no call.
+evidence fail with a nonzero exit status. Arguments after `live-probe` go to
+`probe.py`; `python tasks.py live-probe --help` makes no call.
 
 Manual checks, in order:
 
@@ -72,10 +80,9 @@ For a real Pipecat mock-worker job plus native Boson web search, stop the curren
 server, then run:
 
 ```sh
-make worker-demo
+python tasks.py worker-demo
 # In another terminal:
-.bootstrap/bin/uv run --locked probe.py --live \
-  --search "Search the web for the official Boson AI website and tell me its domain."
+python tasks.py live-probe --search "Search the web for the official Boson AI website and tell me its domain."
 ```
 
 The function delegates through Pipecat's actual worker bus when
@@ -83,20 +90,18 @@ The function delegates through Pipecat's actual worker bus when
 as a native server tool and never executed locally. The probe waits for its
 result and subsequent spoken answer, rather than accepting the search preamble.
 
-Optional synthetic microphone/barge-in checks, using macOS `say` to generate
-test utterances without another API or key:
+Optional synthetic microphone/barge-in checks. `test-audio` generates the test
+utterances without another API or key, using macOS `say` or the built-in Windows
+speech synthesizer:
 
 ```sh
-mkdir -p captures
-say -o captures/planner-input.wav --file-format=WAVE --data-format=LEI16@48000 \
-  "What is on my planner today?"
-say -o captures/interrupt-input.wav --file-format=WAVE --data-format=LEI16@48000 \
-  "Stop counting. Say interruption confirmed."
-.bootstrap/bin/uv run --locked probe.py --live \
-  --audio-wav captures/planner-input.wav --barge-wav captures/interrupt-input.wav
+python tasks.py test-audio
+python tasks.py live-probe --audio-wav captures/planner-input.wav --barge-wav captures/interrupt-input.wav
 ```
 
-On other platforms, supply WAV files containing those utterances. `probe_audio.py`
+On Linux, record `captures/planner-input.wav` (“What is on my planner today?”) and
+`captures/interrupt-input.wav` (“Stop counting. Say interruption confirmed.”)
+yourself, as 48 kHz 16-bit mono WAV files. `probe_audio.py`
 is a test microphone using aiortc's MediaPlayer; production capture/playback stays
 in Pipecat. A spoken planner repeat can use the earlier tool result in context;
 the audio test checks VAD, transcription, and output, while the separate planner
@@ -104,7 +109,8 @@ turn checks actual function execution.
 
 For equivalent live tests of the unchanged Step 1 app, install its Playwright
 browser (`npm ci` and `npx playwright install chromium` in that directory), start
-it with `PORT=3002 npm run dev`, then run here:
+it on port 3002 (`PORT=3002 npm run dev`; in PowerShell,
+`$env:PORT=3002; npm run dev`), then run here:
 
 ```sh
 node compare_direct.mjs --live

@@ -13,7 +13,7 @@ from pipecat.runner.utils import create_transport
 from pipecat.transports.base_transport import TransportParams
 from pipecat.workers.runner import WorkerRunner
 
-from config import MODEL, load_settings
+from config import MODEL, load_settings, utf8_console
 from mock_worker import MockPlannerWorker
 from planner import planner_tool
 from service import VerifiedBosonService
@@ -88,6 +88,7 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
+    utf8_console()
     # Validate before the runner starts listening; no credentials in arguments.
     settings = load_settings()
     configure_logging(settings.api_key)

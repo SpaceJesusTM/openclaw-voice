@@ -44,6 +44,24 @@ confirmed.” The direct comparison marked its interrupted item at approximately
 **395 ms** and received the same requested confirmation. Those are individual
 test runs, not comparable accuracy measurements or latency benchmarks.
 
+## Windows rerun
+
+Environment: Windows 11, uv 0.13.5 with uv-managed Python 3.11.17, the same
+locked packages, through `tasks.py` (no `make`).
+
+| Check | Result |
+| --- | --- |
+| `python tasks.py setup` | PASS: bootstrap, Python download into `.bootstrap/python`, locked sync; a rerun only re-checks |
+| `python tasks.py check` | PASS: 18 tests, Ruff, Python compilation |
+| Runner startup without `PYTHONUTF8` | PASS after the `utf8_console()` fix; previously crashed printing Pipecat's banner under cp1252 |
+| `python tasks.py test-audio` | PASS: Windows speech synthesizer wrote both 48 kHz 16-bit mono WAVs |
+| `python tasks.py live-probe` with both WAVs | PASS: model, typed response, planner function, synthetic audio input, barge-in with server truncation |
+
+One earlier live run failed with `Unexpected response status: cancelled`. The
+greeting had called the planner; the probe accepted the greeting after its first
+completed response and sent the next prompt while the tool follow-up was still
+speaking, which interrupted it. This is a probe timing race, not Windows-specific.
+
 ## Evidence artifacts
 
 Ignored local reports (available in this checkout; intentionally not committed):

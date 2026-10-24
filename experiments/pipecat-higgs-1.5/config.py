@@ -1,6 +1,7 @@
 """Local configuration. Never prints or returns credentials to the client."""
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -10,6 +11,13 @@ from dotenv import dotenv_values
 ROOT = Path(__file__).resolve().parent
 MODEL = "higgs-realtime-1.5-preview"
 URL = f"wss://api.boson.ai/v1/realtime?model={MODEL}"
+
+
+def utf8_console():
+    """Windows consoles default to a legacy code page that cannot print Pipecat's banner or model text."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def preview_model(value: str) -> str:

@@ -17,7 +17,7 @@ def planner_result(arguments):
     if arguments != {"day": "today"}:
         return {"error": "invalid_arguments", "summary": 'Expected exactly {"day":"today"}.'}
     try:
-        data = json.loads(FIXTURE.read_text())
+        data = json.loads(FIXTURE.read_text(encoding="utf-8"))
         return {
             "summary": f"{len(data['entries'])} demo entries. Verification code {data['verification_code']}.",
             "detail": data,

@@ -10,7 +10,7 @@ import aiohttp
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from aiortc.mediastreams import AudioStreamTrack, MediaStreamError
 
-from config import MODEL, ROOT
+from config import MODEL, ROOT, utf8_console
 from probe_audio import WavMicrophone
 
 
@@ -78,7 +78,9 @@ class Evidence:
                 return "".join(c for c in text.lower() if c.isalnum())
 
             valid = valid and any(not item.get("result", {}).get("error") for item in results)
-            fixture = json.loads((ROOT.parent / "higgs-realtime-1.5/fixtures/planner.json").read_text())
+            fixture = json.loads(
+                (ROOT.parent / "higgs-realtime-1.5/fixtures/planner.json").read_text(encoding="utf-8")
+            )
             valid = valid and normalize(fixture["entries"][0]["title"]) in normalize(text)
         if kind == "search":
             calls = {
@@ -343,13 +345,15 @@ async def run(url, timeout=60, search=None, audio_wav=None, barge_wav=None):
                     "events": evidence.events,
                 },
                 indent=2,
-            )
+            ),
+            encoding="utf-8",
         )
         print(f"Report: {path}")
     return 1 if error else 0
 
 
 if __name__ == "__main__":
+    utf8_console()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--live", action="store_true", help="Explicitly allow a live call through the running bot"

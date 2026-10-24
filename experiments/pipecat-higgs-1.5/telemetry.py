@@ -66,7 +66,7 @@ class Trace:
         if len(self.events) > 2000:
             del self.events[:1000]
         if self.persist:
-            with self.path.open("a") as file:
+            with self.path.open("a", encoding="utf-8") as file:
                 file.write(json.dumps(entry) + "\n")
         if kind in (
             "model.verified",
