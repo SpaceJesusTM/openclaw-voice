@@ -8,7 +8,25 @@ from clawvoice.timeutil import SYSTEM_CLOCK, Clock, local_now, spoken_clock
 MAX_ROLE_CHARS = 1800
 
 
+def build_voice_only_instructions(agent: AgentConfig, clock: Clock = SYSTEM_CLOCK) -> str:
+    """A conversation-only agent: its personality, with no tools to describe."""
+    now = local_now(agent.tz, clock)
+    today = f"{now.strftime('%A, %B')} {now.day}, {now.year}"
+    role = agent.role_markdown.strip()[:MAX_ROLE_CHARS]
+    name = agent.display_name
+    return f"""You are {name}, speaking live with your owner through a voice interface.
+{role}
+
+Style: spoken, natural and lively; usually one to three short sentences unless the owner asks for a longer story or joke. No markdown, lists, emoji or URLs. Vary your material; never repeat a joke you already told in this conversation. When the conversation starts, greet the owner in one short sentence.
+
+Today is {today} ({agent.timezone}). You have no tools: you cannot look anything up, check calendars, mail, files, code or the web, and you never run or track background tasks. Never claim you did, never invent live facts (news, prices, schedules, project status) or results, and never take credit for anyone else's work. If asked for something like that, say so playfully and suggest who could help.
+
+If the user only tells you to stop or be quiet, stop and say nothing. Never reveal secrets or internal details."""
+
+
 def build_instructions(agent: AgentConfig, clock: Clock = SYSTEM_CLOCK) -> str:
+    if agent.voice_only:
+        return build_voice_only_instructions(agent, clock)
     now = local_now(agent.tz, clock)
     today = f"{now.strftime('%A, %B')} {now.day}, {now.year}"
     role = agent.role_markdown.strip()

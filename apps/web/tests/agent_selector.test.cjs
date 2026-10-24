@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function setupEnv({ team = false } = {}) {
+function setupEnv({ team = false, jester = false } = {}) {
   const nodes = new Map();
   const styles = new Map();
   const element = () => ({
@@ -67,7 +67,14 @@ function setupEnv({ team = false } = {}) {
         metrics: { read_ms_p50: 6, hits_fresh: 4 },
       },
     },
+    jester: {
+      agent: { id: 'jester', display_name: 'Jester' },
+      gateway: { voice_only: true, applicable: false, active_transport: null, config_error: null },
+      jobs: [],
+      cache: { topics: [], metrics: {} },
+    },
   };
+  const jesterIdentity = { id: 'jester', display_name: 'Jester', emoji: '🩷', color: '#ec4899', role: 'The room entertainer: jokes and banter.', tagline: 'Entertainment', voice_only: true, topics: [] };
 
   let currentUrl = 'http://127.0.0.1:7860/';
   const context = vm.createContext({
@@ -88,8 +95,9 @@ function setupEnv({ team = false } = {}) {
             agents: [
               { id: 'tari', display_name: 'Tari', emoji: '🟢', color: '#22c55e', role: 'Dependable personal coordinator.' },
               { id: 'astra', display_name: 'Astra', emoji: '🔵', color: '#3b82f6', role: 'Practical coding assistant.' },
+              ...(jester ? [jesterIdentity] : []),
             ],
-            ...(team ? { team: { available: true, agents: ['tari', 'astra'] } } : {}),
+            ...(team ? { team: { available: true, agents: ['tari', 'astra', ...(jester ? ['jester'] : [])] } } : {}),
           }),
         };
       }
@@ -228,4 +236,34 @@ test('Team shows active agent separately from speaker and only labels a real too
   assert.equal(env.nodes.get('team-queue').textContent, 'Routing unavailable; repeat.');
   env.run('ui.team.router_mode = "names"; resetConversationForAgent(ui.agent);');
   assert.match(env.nodes.get('transcript').innerHTML, /Requests without a name go to nobody/);
+});
+
+test('Jester: voice-only tab with an honest gateway badge, and a third Team seat with speaker attribution', async () => {
+  const env = setupEnv({ team: true, jester: true });
+  await env.run('init()');
+  const selector = env.nodes.get('agent-selector').innerHTML;
+  assert.match(selector, /data-agent="jester"/);
+  assert.match(selector, /Entertainment/);
+  assert.match(selector, /Tari \+ Astra \+ Jester/);
+
+  env.run('connect = async () => {};');
+  await env.run('selectAgent("jester")');
+  assert.equal(env.run('ui.agent.id'), 'jester');
+  assert.equal(env.styles.get('--accent'), '#ec4899');
+  assert.match(env.nodes.get('gateway-badge').textContent, /Voice only/);
+  assert.match(env.nodes.get('gateway-badge').className, /ok/);
+  assert.match(env.nodes.get('topics').innerHTML, /Voice-only agent/);
+  assert.match(env.nodes.get('transcript').innerHTML, /something funny/);
+
+  await env.run('selectAgent("team")');
+  const seats = env.nodes.get('team-seats').innerHTML;
+  for (const name of ['Tari', 'Astra', 'Jester']) assert.match(seats, new RegExp(name));
+  assert.match(env.nodes.get('gateway-badge').textContent, /Jester voice only/);
+  assert.match(env.nodes.get('gateway-badge').className, /ok/);
+  env.run(`
+    ui.connected = true;
+    onServerMessage({ kind: 'clawvoice.team.reply', reply: 7, agent: 'jester', reply_kind: 'answer', phase: 'speaking', text: 'Why did the function break up? Too many arguments.' });
+  `);
+  const bots = env.nodes.get('transcript').children.filter((t) => t.className.startsWith('turn bot'));
+  assert.match(bots[bots.length - 1].innerHTML, /Jester/);
 });

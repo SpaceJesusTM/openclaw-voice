@@ -67,7 +67,10 @@ node probes/ui_probe.mjs --live                              # browser path
 .venv/bin/python probes/voice_probe.py --help                # all scenarios (a-j)
 ```
 
-## Team mode: Tari and Astra together
+## Team mode: Tari, Astra and Jester together
+
+Jester (entertainment) is voice-only and needs no Gateway; it starts with the voice
+server. Solo: http://127.0.0.1:7860/?agent=jester.
 
 Start both isolated OpenClaw agents (Astra once initialized and authorized, see
 [infra/openclaw/README.md](../infra/openclaw/README.md#isolated-astra-coding-agent---agent-astra)),

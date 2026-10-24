@@ -78,8 +78,8 @@ def test_astra_configuration_is_loaded_from_files_not_code():
 
 
 def test_fixtures_load_only_when_enabled():
-    assert list(load_registry(environ={}).agents) == ["tari", "astra"]
-    assert list(load_registry(environ={"CLAWVOICE_ENABLE_FIXTURES": "1"}).agents) == ["tari", "astra", "fixture"]
+    assert list(load_registry(environ={}).agents) == ["tari", "astra", "jester"]
+    assert list(load_registry(environ={"CLAWVOICE_ENABLE_FIXTURES": "1"}).agents) == ["tari", "astra", "jester", "fixture"]
     registry = load_registry(environ={"CLAWVOICE_AGENTS": "astra"})
     assert registry.default.id == "astra"
 

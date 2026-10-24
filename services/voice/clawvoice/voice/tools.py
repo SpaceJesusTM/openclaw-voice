@@ -41,6 +41,8 @@ class VoiceTools:
 
     # ------------------------------------------------------------ schemas
     def schemas(self) -> list[FunctionSchema]:
+        if self.agent.voice_only:
+            return []  # no OpenClaw backend: offer no tool it cannot honour
         topics = self.runtime.agent.topics
         topic_help = "; ".join(f"{t.key} = {t.description} (covers {t.coverage})" for t in topics)
         targets = list(self.agent.targets)

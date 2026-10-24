@@ -1,5 +1,8 @@
 """Declarative agent configuration: identity, OpenClaw backend, hot context, delegation.
 
+An agent with ``backend: voice`` is voice-only: a Higgs conversation with its own
+personality and voice, and no OpenClaw Gateway, tools, cache topics or jobs.
+
 Agents are described in ``services/voice/agents/<id>.yaml`` and listed in
 ``agents/team.yaml``. Nothing in the runtime branches on a particular agent ID:
 names, colors, voices, Gateway endpoints, helper commands, cache topics and
@@ -81,7 +84,7 @@ class AgentConfig:
     voice: str
     greeting: str
     openclaw_agent_id: str
-    gateway: GatewaySpec
+    gateway: GatewaySpec | None  # None for a voice-only agent
     session_key_template: str
     question_timeout_s: float
     change_timeout_s: float
@@ -93,6 +96,9 @@ class AgentConfig:
     clarify_hint: str = "what exactly should change, and any date, time and title it needs"
     # Words that address this agent in a Team room: its name plus likely transcriptions.
     aliases: tuple[str, ...] = ()
+    # Voice-only: no OpenClaw backend, so no tools, cache topics, jobs or delegation.
+    voice_only: bool = False
+    tagline: str = ""  # short role label for the UI, e.g. "Entertainment"
     fixture: bool = False
     source_path: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -122,6 +128,8 @@ class AgentConfig:
             "owner_scope": self.owner_scope,
             "topics": [{"key": t.key, "description": t.description} for t in self.topics],
             "aliases": list(self.aliases),
+            "voice_only": self.voice_only,
+            "tagline": self.tagline,
             "fixture": self.fixture,
         }
 
@@ -179,24 +187,35 @@ def parse_agent(data: dict[str, Any], *, source: Path, base: Path) -> AgentConfi
             raise ConfigError(f"{where}: role_file must be a file inside {base}")
         role_markdown = role_path.read_text(encoding="utf-8").strip()
 
+    backend = str(data.get("backend") or "openclaw")
+    if backend not in ("openclaw", "voice"):
+        raise ConfigError(f"{where}: backend must be openclaw or voice")
+    voice_only = backend == "voice"
+    if voice_only:
+        # Honest by construction: a voice-only agent declares nothing it cannot do.
+        declared = [key for key in ("openclaw", "helpers", "hot_context", "delegation", "plugins") if data.get(key)]
+        if declared:
+            raise ConfigError(f"{where}: a voice-only agent (backend: voice) cannot declare {', '.join(declared)}")
     openclaw = data.get("openclaw") or {}
     gateway = openclaw.get("gateway") or {}
-    allow_remote = bool(gateway.get("allow_remote", False))
-    transport = gateway.get("transport", "auto")
-    if transport not in ("auto", "ws", "http"):
-        raise ConfigError(f"{where}: openclaw.gateway.transport must be auto, ws or http")
-    token_ref = _require(gateway, "token_ref", f"{where} openclaw.gateway")
-    if not token_ref.startswith(("env:", "envfile:")):
-        raise ConfigError(f"{where}: token_ref must be a server-side reference (env: or envfile:)")
-    gateway_spec = GatewaySpec(
-        ws_url=_check_url(_require(gateway, "ws_url", where), ("ws", "wss"), allow_remote, where),
-        http_url=_check_url(_require(gateway, "http_url", where), ("http", "https"), allow_remote, where),
-        token_ref=token_ref,
-        transport=transport,
-        device_file=str(gateway.get("device_file", "gateway-device.json")),
-        allow_remote=allow_remote,
-        pairing_hint=str(gateway.get("pairing_hint") or "openclaw devices approve {request_id}"),
-    )
+    gateway_spec: GatewaySpec | None = None
+    if not voice_only:
+        allow_remote = bool(gateway.get("allow_remote", False))
+        transport = gateway.get("transport", "auto")
+        if transport not in ("auto", "ws", "http"):
+            raise ConfigError(f"{where}: openclaw.gateway.transport must be auto, ws or http")
+        token_ref = _require(gateway, "token_ref", f"{where} openclaw.gateway")
+        if not token_ref.startswith(("env:", "envfile:")):
+            raise ConfigError(f"{where}: token_ref must be a server-side reference (env: or envfile:)")
+        gateway_spec = GatewaySpec(
+            ws_url=_check_url(_require(gateway, "ws_url", where), ("ws", "wss"), allow_remote, where),
+            http_url=_check_url(_require(gateway, "http_url", where), ("http", "https"), allow_remote, where),
+            token_ref=token_ref,
+            transport=transport,
+            device_file=str(gateway.get("device_file", "gateway-device.json")),
+            allow_remote=allow_remote,
+            pairing_hint=str(gateway.get("pairing_hint") or "openclaw devices approve {request_id}"),
+        )
     session = openclaw.get("session") or {}
     timeouts = openclaw.get("timeouts") or {}
 
@@ -287,6 +306,8 @@ def parse_agent(data: dict[str, Any], *, source: Path, base: Path) -> AgentConfi
             delegation.get("clarify") or "what exactly should change, and any date, time and title it needs"
         ),
         aliases=tuple(aliases),
+        voice_only=voice_only,
+        tagline=str(data.get("tagline") or "")[:40],
         fixture=bool(data.get("fixture", False)),
         source_path=str(source),
         extra=dict(data.get("extra") or {}),

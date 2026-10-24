@@ -112,7 +112,22 @@ connection; one you already heard part of is not replayed.
 - Aliases: `addressing.aliases` per agent YAML.
 - Listener VAD: the single-agent threshold, silence `max(BOSON_VAD_SILENCE_MS, 700)`;
   override with `CLAWVOICE_TEAM_VAD_SILENCE_MS`.
-- Team members: every configured non-fixture agent (`agents/team.yaml`).
+- Team members: every configured non-fixture agent (`agents/team.yaml`): Tari,
+  Astra and Jester.
+
+## Voice-only agents (Jester)
+
+`backend: voice` in an agent's YAML (`agents/jester.yaml`) makes a voice-only agent:
+its own Higgs session, personality (`agents/jester.md`) and voice (`jake`), and no
+OpenClaw Gateway, credentials, helpers, cache topics, jobs or delegation. Declaring
+any of those is a configuration error. Its runtime uses a no-op backend, so nothing
+connects to a Gateway; it offers Higgs no tools (no `get_context`, `delegate_task`,
+`check_tasks` or `cancel_task`) and gets short instructions that say it has none.
+`/api/state` reports `voice_only: true, applicable: false`, and the UI shows
+"Voice only · no gateway needed" rather than a failure. In Team mode it is a normal
+seat: the overseer's roster and `call_agent` enum come from the configured agents,
+the names router uses its aliases, and it shares the one speaking floor. Tari and
+Astra are unchanged real OpenClaw agents.
 
 ## Astra host-helper trust boundary (fixed here)
 

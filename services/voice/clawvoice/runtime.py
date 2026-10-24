@@ -28,6 +28,39 @@ if TYPE_CHECKING:
     from clawvoice.voice.session import VoiceSession
 
 
+class VoiceOnlyBackend:
+    """Stands in for the OpenClaw adapter of a voice-only agent (``backend: voice``).
+
+    There is no Gateway to connect to, and no tool can start a job, so nothing
+    here is ever reached for a run; health says honestly that it does not apply.
+    """
+
+    def __init__(self, agent: AgentConfig):
+        self.agent = agent
+        self.mode: str | None = None
+
+    async def select_transport(self, *, force: bool = False) -> str | None:
+        return None
+
+    def health(self) -> dict[str, Any]:
+        return {
+            "agent_id": self.agent.id,
+            "voice_only": True,
+            "applicable": False,
+            "active_transport": None,
+            "config_error": None,
+            "note": "Voice-only agent: no OpenClaw gateway, tools, cache or background jobs.",
+        }
+
+    async def _unavailable(self, *_args, **_kwargs):
+        raise RuntimeError(f"{self.agent.id} is voice-only and has no OpenClaw backend")
+
+    submit = outcome = recover = cancel = _unavailable
+
+    async def close(self) -> None:
+        return None
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -46,7 +79,9 @@ class AgentRuntime:
             raise ConfigError(f"{agent.id}: no component provides {', '.join(missing)}")
         self.components = components
         self.helpers = HelperRunner(agent.helpers, extra_env=dict(agent.extra.get("helper_env") or {}))
-        self.backend = OpenClawAgent(agent, state_directory=state_directory)
+        self.backend = (
+            VoiceOnlyBackend(agent) if agent.voice_only else OpenClawAgent(agent, state_directory=state_directory)
+        )
         self.store = JobStore(state_directory / "jobs", agent.id, persist=persist_jobs)
         self.cache = HotContextCache(
             agent, components, self.helpers, clock=clock, jobs_view=self._jobs_view, on_change=self._cache_changed
@@ -63,8 +98,11 @@ class AgentRuntime:
         return self.jobs.public(limit=10)
 
     async def start(self) -> None:
-        mode = await self.backend.select_transport()
-        logger.info(f"Agent {self.agent.id}: OpenClaw transport {mode or 'unavailable'}")
+        if self.agent.voice_only:
+            logger.info(f"Agent {self.agent.id}: voice-only (no OpenClaw gateway, tools or jobs)")
+        else:
+            mode = await self.backend.select_transport()
+            logger.info(f"Agent {self.agent.id}: OpenClaw transport {mode or 'unavailable'}")
         await self.cache.start(warm=True)
         await self.jobs.start()
         self.started = True

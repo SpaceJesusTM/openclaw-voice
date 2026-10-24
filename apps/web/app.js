@@ -115,6 +115,7 @@ function syncPreview() {
 // ------------------------------------------------------------------ agent + state
 function shortRole(agent) {
   if (!agent) return "";
+  if (agent.tagline) return agent.tagline;
   if (agent.id === "tari") return "Personal Assistant";
   if (agent.id === "astra") return "Coding Assistant";
   const raw = String(agent.role || "").split(/[.:]/)[0].trim();
@@ -164,12 +165,14 @@ function resetConversationForAgent(agent) {
   if (isTeam()) {
     box.innerHTML = ui.team?.router_mode === "names"
       ? `<p class="hint">Press <strong>Connect</strong> once and address an agent by name. Requests without a name go to nobody. Use headphones to avoid echo.</p>`
-      : `<p class="hint">Press <strong>Connect</strong> and talk naturally: “What's on my planner today?” or “What's the latest website update?” You can also address an agent by name. Use headphones to avoid echo.</p>`;
+      : `<p class="hint">Press <strong>Connect</strong> and talk naturally: “What's on my planner today?”, “What's the latest website update?” or “Tell me a joke.” You can also address an agent by name. Use headphones to avoid echo.</p>`;
     return;
   }
-  const example = agent?.id === "astra"
-    ? "create a simple website for a fictional coffee shop."
-    : "What's on my planner today?";
+  const example = agent?.voice_only
+    ? "Tell me something funny."
+    : agent?.id === "astra"
+      ? "create a simple website for a fictional coffee shop."
+      : "What's on my planner today?";
   box.innerHTML = `<p class="hint">Press <strong>Connect</strong>, allow the microphone, and say “${esc(example)}” Use headphones to avoid echo.</p>`;
 }
 
@@ -323,8 +326,9 @@ function applyTeamStates(states) {
 
 function renderTeamGateways(gateways) {
   const badge = $("gateway-badge");
-  const parts = gateways.map(([id, g]) => `${teamAgent(id).display_name} ${g?.active_transport === "ws" ? "WebSocket" : g?.active_transport === "http" ? "HTTP" : "unavailable"}`);
-  const ok = gateways.every(([, g]) => g && (g.active_transport === "ws" || g.active_transport === "http"));
+  // A voice-only agent has no gateway: shown as such, never as a failure.
+  const parts = gateways.map(([id, g]) => `${teamAgent(id).display_name} ${g?.voice_only ? "voice only" : g?.active_transport === "ws" ? "WebSocket" : g?.active_transport === "http" ? "HTTP" : "unavailable"}`);
+  const ok = gateways.every(([, g]) => g && (g.voice_only || g.active_transport === "ws" || g.active_transport === "http"));
   badge.textContent = `Gateways · ${parts.join(" · ")}`;
   badge.className = `status-line badge ${ok ? "ok" : "bad"}`;
   const problem = gateways.find(([, g]) => g?.config_error);
@@ -339,6 +343,12 @@ function renderGateway(gateway) {
   if (!gateway) return;
   const mode = gateway.active_transport;
   const ws = gateway.websocket;
+  if (gateway.voice_only) {
+    badge.textContent = "Voice only · no gateway needed";
+    badge.className = "status-line badge ok";
+    badge.title = gateway.note || "This agent talks through Higgs only: no OpenClaw gateway, tools or background jobs.";
+    return;
+  }
   if (gateway.config_error) {
     badge.textContent = "Gateway · configuration error";
     badge.className = "status-line badge bad";
@@ -451,7 +461,9 @@ function renderTopics(cache) {
         ${note ? `<span class="topic-note">${esc(note)}</span>` : ""}
       </li>`;
     })
-    .join("") || '<li class="empty">No topics configured.</li>';
+    .join("") || (!isTeam() && ui.agent?.voice_only
+      ? '<li class="empty">Voice-only agent: no fast context or background tasks.</li>'
+      : '<li class="empty">No topics configured.</li>');
   syncPreview();
 }
 

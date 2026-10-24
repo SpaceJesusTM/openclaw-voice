@@ -75,11 +75,12 @@ def team_instructions(agent: AgentConfig, others: list[AgentConfig], *, intellig
         "A silent router selects the conversational agent; explicit names take priority. You receive only requests selected for you"
         if intelligent else "The owner speaks to each of you by name, and you receive only what is said to you"
     )
+    notices = "" if agent.voice_only else " Background results reach you as notices and are spoken when the room is quiet."
     return (
         build_instructions(agent)
         + f"""
 
-Team room: you share this voice room with {names}. {addressing}: you never hear {names}, their tools or their results, and they never hear yours. Speak only for yourself; never answer for {names} or claim their work. If the owner asks you about something that is {names}'s, say they can ask {names} by name. Background results reach you as notices and are spoken when the room is quiet."""
+Team room: you share this voice room with {names}. {addressing}: you never hear {names}, their tools or their results, and they never hear yours. Speak only for yourself; never answer for {names} or claim their work. If the owner asks you about something that is {names}'s, say they can ask {names} by name.{notices}"""
     )
 
 

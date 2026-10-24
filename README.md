@@ -25,8 +25,13 @@ working concurrently, with one shared speaking floor and queued replies and
 completion announcements. Tari-only and Astra-only modes remain.
 See [docs/team-voice.md](docs/team-voice.md).
 
-**Still future:** Jester; Priority 2b relevance routing and agent-to-agent
-collaboration; Priority 3 multiple people and cross-user permissions.
+**PFinal 3, branch `feat/pfinal3-jester`:** **Jester**, a voice-only entertainment
+agent (jokes, banter, roasts; Higgs voice `jake`) with its own tab, and a third seat
+in Team mode, where the Higgs overseer routes to it like any other agent. Jester has
+no OpenClaw backend, tools or jobs (`backend: voice` in `agents/jester.yaml`).
+
+**Still future:** agent-to-agent collaboration; Priority 3 multiple people and
+cross-user permissions.
 See the [roadmap](docs/ROADMAP_ACCEPTANCE_DEMO.md).
 
 ## Talk to Tari
