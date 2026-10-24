@@ -362,6 +362,14 @@ accepted -> queued -> running -> verifying -> completed | failed | cancelled | u
 - **Speech interruption** (barge-in) stops playback; Pipecat/Boson truncate the
   assistant's item. Tools are registered with `cancel_on_interruption=False`
   and jobs run in the process-level lane, so nothing is cancelled.
+- **Stop speaking** ("Stop", "Stop talking", "That's enough", "You can stop
+  that", as the whole utterance): the reply in progress is cancelled
+  (`response.cancel` + truncate) and flushed, the server's automatic reply to the
+  "stop" turn is cancelled, and Tari stays silent until the next turn (speech or
+  typed text). A completion notice being spoken is marked *dismissed*, not
+  replayed; its job result stays in task history. Notices wait until the user
+  says something new. Jobs keep running. Anything with more content ("stop the
+  background task", a new question) is a normal turn.
 - **Explicit cancellation** ("cancel that task", the UI's Cancel button, or
   `POST /api/jobs/<id>/cancel`): a queued job is dropped before dispatch; a
   running job is aborted (`chat.abort` on WebSocket, closing the stream on
@@ -444,4 +452,26 @@ item with the demo's own helper and reports whether it is gone. Scenario `f`
 
 ## Known limitations
 
-See [voice-validation.md](voice-validation.md#limitations-and-untested-areas).
+Current as of `v0.1.0`; the evidence behind each item is in
+[voice-validation.md](voice-validation.md), [voice-p1-fixes.md](voice-p1-fixes.md)
+and [voice-gmail-latest.md](voice-gmail-latest.md).
+
+- **Pending owner action:** physical microphone and speaker validation (all live
+  tests used synthetic speech), and WebSocket device approval (Tari uses HTTP;
+  a ClawVoice restart during an HTTP run marks a change *uncertain*).
+- Not exercised live: recurring and all-day events, multi-day events, checklist
+  status changes and completion (covered offline). The planner refuses
+  recurring/all-day/multi-day edits and hands them to the Calendar skill.
+- Only changes listed in the agent's receipt are independently read back; side
+  changes mentioned only in its summary are not.
+- One OpenClaw session lane per agent: a long job queues later ones. Cached
+  answers are unaffected.
+- A notice cut off by a disconnect is announced again at the next connection
+  (up to 6 hours); a notice stopped with "stop" is dismissed.
+- Gmail's Primary tab is assumed to be the default tab layout unless
+  `TARI_GMAIL_SEPARATE_TABS` is set; the API cannot read tab settings.
+- Higgs instruction adherence is probabilistic: the behaviors are verified by
+  probes, not guaranteed. Natural-language references ("that event") can be
+  ambiguous; name the item when several could be meant.
+- Several tabs share jobs and announcements (latest session wins); not load-tested.
+- Astra is a fixture agent; no second real OpenClaw/Google environment exists yet.

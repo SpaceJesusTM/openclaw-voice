@@ -1,6 +1,6 @@
 # ClawVoice — Claude project entry point
 
-> **Priority 1 engineering handoff, 2026-10-24.** These documents preserve the full product vision and architecture intent. They are not evidence that future features exist. Treat the latest checked-out code, tests, and explicit owner request as authoritative for implementation status.
+> **Priority 1 is complete (baseline `release/p1-stable`, tag `v0.1.0`); next is Priority 2a.** These documents preserve the full product vision and architecture intent. They are not evidence that future features exist. Treat the latest checked-out code, tests, and explicit owner request as authoritative for implementation status.
 
 ## Read these in order
 
@@ -10,7 +10,7 @@
 4. [Roadmap, acceptance tests, and demo](docs/ROADMAP_ACCEPTANCE_DEMO.md): what is mandatory *now* vs future phases and how each phase is proved.
 5. [Original hackathon vision (historical)](references/ORIGINAL_HACKATHON_VISION.md): the user's original, unchanged concept brief. Its early implementation-status descriptions are historical, not a current status report.
 
-These docs are **durable product and architecture intent**, not permission to implement all phases in one task. The latest explicit owner prompt determines the current assignment. If the latest assignment is **Priority 1**, complete Priority 1 only while keeping future milestones structurally possible. Avoid unrequested multi-agent federation, added subscriptions, public hosting, or speculative services.
+These docs are **durable product and architecture intent**, not permission to implement all phases in one task. The latest explicit owner prompt determines the current assignment. Complete only the assigned priority (next: **Priority 2a**) while keeping later milestones structurally possible. Avoid unrequested multi-agent federation, added subscriptions, public hosting, or speculative services.
 
 ## Product identity
 
@@ -23,12 +23,12 @@ These docs are **durable product and architecture intent**, not permission to im
 ## Verified foundation and references (snapshot, re-check before work)
 
 - Repository: https://github.com/SpaceJesusTM/openclaw-voice; reference Tari: https://github.com/SpaceJesusTM/tari-public.
-- Foundation branch: `feat/openclaw-google-foundation`; planner integration verified at commit `e77e9c42a5e44e1c0810986452da6dcd81a997d8`. Priority 1 implementation branch: `feat/voice-single-agent-adapter`, created from that commit. Confirm actual local/remote HEAD before modifying code.
+- History: foundation `feat/openclaw-google-foundation` (`e77e9c4`) → Priority 1 `feat/voice-single-agent-adapter` (`f884ea4`) → fixes `5a78c91` (unified schedule, Gmail, microphone), `d00b82c` (latest email), `c3cd8c0` (live fallback), `6bb76aa` (stop speaking). **Stable baseline: `release/p1-stable` / tag `v0.1.0`.** `main` still holds only the initial commit while the unrelated `peer-convo-demo` PR targets it. Confirm actual local/remote HEAD before modifying code.
 - OpenClaw isolated demo in `infra/openclaw/`, local Gateway `127.0.0.1:18939` by default, with `openclaw/tari` agent selection and backend-only bearer auth. The underlying agent model is configured independently; Tari was verified using `openai/gpt-6.1-sol` with ChatGPT subscription OAuth.
 - `tari-read`: Gmail and Calendar read-only OAuth; `tari-calendar-write`: independent Calendar management OAuth. Real reads and CLI create/update/read-back/delete passed; agent-led Calendar creation was exercised too. Gmail **must remain read-only**.
-- The real Tari Public day planner has been ported and committed: `docs/planner.md`, `infra/openclaw/workspace/bin/day-planner`, and `infra/openclaw/workspace/skills/tari-day-planner/SKILL.md`. Its audit reports **78 offline tests passing**, live persistence across Docker restart, and agent-invoked planner reads/writes. Planner/checklist state remains local; Calendar entries remain separate. Check the active Mac installation, including `manage.py install-planner` if needed; remote audit is not proof of the current local checkout.
+- The real Tari Public day planner has been ported and committed: `docs/planner.md`, `infra/openclaw/workspace/bin/day-planner`, and `infra/openclaw/workspace/skills/tari-day-planner/SKILL.md`. Its audit reports **78 offline tests passing**, live persistence across Docker restart, and agent-invoked planner reads/writes. Since `5a78c91` new timed planner entries are Calendar events (one schedule); legacy local blocks and the checklist stay local. Use `manage.py update-workspace` to bring the demo workspace to the committed templates; remote audit is not proof of the current local checkout.
 - The Pipecat/Boson experiment in `experiments/pipecat-higgs-1.5/` completed actual realtime preview, speech/audio, interruption, native tool, and mock worker tests. Inspect its documented compatibility fixes. Working reference pins: `pipecat-ai==1.12.0`, `pipecat-boson==0.1.4`, Python 3.11. The exact Higgs model is **`higgs-realtime-1.5-preview`**, not legacy `higgs-realtime`.
-- **Priority 1 status:** implemented in `services/voice/` (runtime) and `apps/web/` (UI); usage in `docs/voice.md`, live and offline evidence in `docs/voice-validation.md`. Tari runs over the Gateway HTTP transport until the owner approves the WebSocket device pairing (documented there).
+- **Priority 1 status:** complete in `services/voice/` (runtime) and `apps/web/` (UI); start with `docs/GETTING_STARTED.md`, reference `docs/voice.md`, evidence `docs/voice-validation.md` (plus `voice-p1-fixes.md`, `voice-gmail-latest.md`). Tari runs over the Gateway HTTP transport until the owner approves the WebSocket device pairing.
 - **Timezone result:** Codex inspected the live smoke-test event: API stored 19:00Z for the requested 3 PM Toronto, correctly equivalent to `2026-10-26T15:00:00-04:00`. The 7 PM UI display is consistent with UTC display settings, **not** an event-writing bug. Preserve IANA `America/Toronto` conversions and validate future recurring/DST writes.
 
 ## Hard boundaries

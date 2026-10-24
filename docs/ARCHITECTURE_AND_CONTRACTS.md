@@ -1,5 +1,7 @@
 # ClawVoice — Architecture and reusable contracts
 
+> **Status:** Priority 1 is implemented (baseline `v0.1.0`; see [architecture.md](architecture.md) and [voice.md](voice.md) for the actual code). Priority 2a and later remain design intent.
+>
 > **Design intent, not an already-implemented API specification.** Claude should inspect actual repo source, Pipecat/Boson compatibility, and OpenClaw Gateway behavior, then choose the simplest coherent implementation. The names, YAML and type shapes below are examples of **semantics**, not requirements to create new microservices.
 
 ## Architectural split

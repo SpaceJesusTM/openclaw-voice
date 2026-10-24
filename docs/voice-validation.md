@@ -1,5 +1,11 @@
 # ClawVoice Priority 1 — validation results (2026-10-24, America/Toronto)
 
+> Historical report for the Priority 1 implementation (`f884ea4`). Later fixes and their
+> evidence: [voice-p1-fixes.md](voice-p1-fixes.md) (unified schedule, Gmail, microphone),
+> [voice-gmail-latest.md](voice-gmail-latest.md), and the `v0.1.0` baseline checks in
+> [ROADMAP_ACCEPTANCE_DEMO.md](ROADMAP_ACCEPTANCE_DEMO.md#priority-1-baseline-v010). Current
+> limitations: [voice.md](voice.md#known-limitations).
+
 Environment: macOS arm64 (Mac demo installation), Python 3.11.6, pipecat-ai
 1.12.0, pipecat-boson 0.1.4 (same locked graph as the experiment), OpenClaw
 2026.9.9 demo container (`infra/openclaw`), Tari on `openai/gpt-6.1-sol` via

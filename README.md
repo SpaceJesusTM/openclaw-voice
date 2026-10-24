@@ -4,35 +4,37 @@ A hackathon project exploring natural conversations with a team of independent
 OpenClaw agents. Voice is powered by **Boson Higgs Realtime 1.5 Preview**
 (`higgs-realtime-1.5-preview`), with **Pipecat** as the chosen voice framework.
 
-## Current progress
+## Status: Priority 1 baseline (`release/p1-stable`, tag `v0.1.0`)
 
-- [x] Direct Higgs 1.5 realtime test — `experiments/higgs-realtime-1.5/`
-- [x] Pipecat + Higgs 1.5 experiment — `experiments/pipecat-higgs-1.5/`
-- [x] Standalone Tari with ChatGPT OAuth, Gmail reads and full Calendar management
-- [x] Unified Calendar/day planner, commute blocks and persistent local checklist
-- [x] **Priority 1:** talk to the real Tari through Higgs + Pipecat, with a generic
-      OpenClaw agent adapter, per-agent hot-context cache, nonblocking verified
-      jobs and spoken completions — `services/voice/`, `apps/web/`
-- [ ] Multiple persistent agents, distinct voices, name routing and collaboration
-- [ ] Optional multi-person shared conversations
+**Implemented** (`services/voice/`, `apps/web/`, `infra/openclaw/`):
+
+- Single-agent realtime voice with Higgs 1.5 Preview over Pipecat (WebRTC, local browser UI)
+- Real OpenClaw integration through a generic, configuration-driven agent adapter (Tari is the live agent)
+- Per-agent hot-context cache for instant answers, with declared coverage and a live
+  OpenClaw fallback for anything outside it
+- Nonblocking background jobs, independent read-back before "done", spoken completion notices
+- Gmail strictly read-only, latest-email retrieval matching the Gmail Primary tab
+- Unified Calendar and day planner (new timed entries are Calendar events), local checklist
+- America/Toronto timezone handling, including DST
+- Push-to-talk, natural interruptions, and "stop talking" without resuming or replaying
+
+**Still future:** Priority 2a multiple independently voiced agents (Tari, Astra,
+Jester) with name routing and one shared floor; Priority 2b relevance routing and
+agent-to-agent collaboration; Priority 3 multiple people and cross-user permissions.
+See the [roadmap](docs/ROADMAP_ACCEPTANCE_DEMO.md).
 
 ## Talk to Tari
 
 ```bash
-python3 infra/openclaw/manage.py start   # the isolated demo OpenClaw (see below)
+python3 infra/openclaw/manage.py start              # the isolated demo OpenClaw (see below)
+python3 infra/openclaw/manage.py update-workspace   # keep Tari's skills current (safe to repeat)
 cd services/voice
-make setup                               # first time only
-make dev                                 # open http://127.0.0.1:7860 and click Connect
+make setup                                          # first time only
+make dev                                            # open http://127.0.0.1:7860 and click Connect
 ```
 
-Ask "What's on my planner today?" (instant, from cached real data), "Create a
-Calendar event tomorrow from 3 to 4 PM called Project Meeting" (done by the
-OpenClaw agent, independently verified, announced when finished), and keep
-talking while it works. Guide: **[docs/voice.md](docs/voice.md)** · Evidence:
-[docs/voice-validation.md](docs/voice-validation.md).
-
-P1 microphone fixes, Primary Inbox retrieval and unified scheduling:
-[validation and manual checks](docs/voice-p1-fixes.md).
+**[Getting started: run and test](docs/GETTING_STARTED.md)** · full guide:
+[docs/voice.md](docs/voice.md) · evidence: [docs/voice-validation.md](docs/voice-validation.md)
 
 ## Start the OpenClaw foundation
 
@@ -65,4 +67,4 @@ Pipecat handles audio transport, the realtime service, tools and the OpenClaw
 Gateway protocol client; OpenClaw provides agent workspaces, memory, skills and
 operations. ClawVoice provides the integration experience: configurable agent
 identities, fast authorized context retrieval, nonblocking verified agent work,
-the speaking floor, and (next) multi-agent routing and collaboration.
+the speaking floor, and (next, Priority 2a) multi-agent voice and routing.

@@ -2,7 +2,8 @@
 
 **Tagline:** **Your AI team, in the room.**  
 **Hackathon context:** Boson AI × Higgs Realtime, October 23–24, 2026  
-**Purpose of this document:** preserve the desired **eventual product**, not merely the next Claude implementation prompt.
+**Purpose of this document:** preserve the desired **eventual product**, not merely the next Claude implementation prompt.  
+**Status:** Priority 1 (one real voiced agent) is complete as baseline `v0.1.0`; multi-agent voice (P2a), collaboration (P2b) and multi-person rooms (P3) are future work.
 
 ## The product idea
 

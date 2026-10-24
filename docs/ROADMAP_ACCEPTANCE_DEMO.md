@@ -6,13 +6,13 @@ This is the **whole-project roadmap**, not a command to implement every phase du
 
 | Stage | Priority | Required capabilities | Evidence of completion |
 | --- | --- | --- | --- |
-| Foundation | P0, already mostly built | Isolated OpenClaw Tari, OAuth, Gmail readonly, Calendar write and read, persistent day planner/checklist | Auth status + real tool read/write + verified planner state; reconfirm after Codex completes its planner task |
-| One working voice + cache + jobs | **P1 — next Claude implementation** | Boson Higgs 1.5 + Pipecat realtime speech, connected to real OpenClaw Tari, hot-context cache with background refresh, nonblocking actions, completion announcements, generic agent registry | Physical/local spoken planner reads and verified Calendar write; can ask a cache question while an OpenClaw job is running; other agent fixture plugs in without runtime rewrites |
-| Multiple independently voiced agents | **P2a** | Two, target three real OpenClaw agent configurations, unique voices/personalities/roles/orbs, explicit name addressing, configurable lead agent, one spoken floor | "Tari..." / "Astra..." / "Jester..." routed only to named backend, visibly distinct voices and work states, no unintended overlapping speech |
+| Foundation | P0 — **complete** | Isolated OpenClaw Tari, OAuth, Gmail readonly, Calendar write and read, persistent day planner/checklist | Auth status + real tool read/write + verified planner state; reconfirm after Codex completes its planner task |
+| One working voice + cache + jobs | **P1 — complete (`v0.1.0`, `release/p1-stable`)** | Boson Higgs 1.5 + Pipecat realtime speech, connected to real OpenClaw Tari, hot-context cache with background refresh, nonblocking actions, completion announcements, generic agent registry | Physical/local spoken planner reads and verified Calendar write; can ask a cache question while an OpenClaw job is running; other agent fixture plugs in without runtime rewrites |
+| Multiple independently voiced agents | **P2a — next** | Two, target three real OpenClaw agent configurations, unique voices/personalities/roles/orbs, explicit name addressing, configurable lead agent, one spoken floor | "Tari..." / "Astra..." / "Jester..." routed only to named backend, visibly distinct voices and work states, no unintended overlapping speech |
 | Relevance + real collaboration | **P2b** | Automatic agent selection, genuine structured agent-to-agent work, team task handling, controlled sequential speaking | A collaborative project-availability request is handled by independently executing Astra and Tari work with correct handoff, user approval and verified action |
 | Shared multi-person agent teams | **P3 — stretch** | Multi-human rooms, independently owned OpenClaw environments, scoped private context exchange, approvals and cross-user negotiation | Two owners coordinate through different agents without private credential leakage or unauthorized writes |
 
-**Scope distinction:** The original hackathon brief lists two independently voiced agents as part of the hackathon *minimum viable demo* and three plus collaboration as the target. The first upcoming Claude task, however, intentionally stops at **P1** to create a solid reusable harness. P2a/P2b are still explicit project requirements for the envisioned finished experience and should remain architecturally possible, not be quietly dropped.
+**Scope distinction:** The original hackathon brief lists two independently voiced agents as part of the hackathon *minimum viable demo* and three plus collaboration as the target. P1 deliberately stopped at one agent to create a solid reusable harness; it is now complete, and **P2a is the next assignment**. P2a/P2b are still explicit project requirements for the envisioned finished experience and should remain architecturally possible, not be quietly dropped.
 
 ## Priority 1: concrete build order
 
@@ -72,6 +72,57 @@ This is the **whole-project roadmap**, not a command to implement every phase du
 | Regression | Existing direct Higgs and Pipecat experiments still pass; planner/Google tests remain green; no production Tari access |
 
 Collect timings including speech-end to first audio, cache-hit latency, refresh latency, job acceptance vs full duration, and completion-to-announcement delay. Report test environment/sample count and distinguish *measured live* from simulated; never invent timings or claim one anecdotal run proves a general latency advantage.
+
+## Priority 1 baseline (v0.1.0)
+
+Branch `release/p1-stable`, annotated tag `v0.1.0` (commit `6bb76aa` plus documentation).
+Contents, in order: `f884ea4` voice harness, generic adapter, cache and jobs;
+`5a78c91` unified Calendar/planner, Gmail access, microphone controls; `d00b82c`
+latest email matching the Gmail Primary tab; `c3cd8c0` live OpenClaw fallback
+outside cache coverage; `6bb76aa` stop-speaking. `main` was intentionally not
+moved: the open `peer-convo-demo` PR targets it, and fast-forwarding would give
+that PR conflicts in `.gitignore` and `README.md`.
+
+Baseline checks (2026-10-24): offline infra 95 OK (Gateway setup, Google wrapper,
+planner, unified schedule), voice 137 passed + Ruff + compile, browser mic gate
+2 passed, Pipecat experiment 18 passed, direct experiment 24 passed; secret scan
+of all tracked files clean. Live on the final code: voice scenario `a` (exact
+preview model, speech, barge-in, reconnect) and the browser probe (7 checks)
+passed. Earlier live runs on the same day cover cache hit vs live OpenClaw lookup
+verified in OpenClaw's transcript (`i`), stop speaking and notice dismissal
+(`j`), Gmail latest + the unified schedule lifecycle (`p1_probe.py`), Calendar
+create/delete (`c`) and background jobs (`d`).
+
+## Priority 2a starting point
+
+Start a feature branch from the baseline:
+
+```sh
+git fetch origin --tags
+git switch -c feat/p2a-multi-agent-voice v0.1.0
+```
+
+What already exists and should be extended, not replaced:
+
+- `services/voice/agents/*.yaml` + `team.yaml`: per-agent identity, role file,
+  color, Boson voice, Gateway, session key, helpers, cache topics with coverage,
+  delegation targets and receipt verifiers. Astra (`astra.yaml`) is a working
+  second agent against the fake Gateway; Jester needs a config.
+- `clawvoice/runtime.py`: one `AgentRuntime` per configured agent (own OpenClaw
+  adapter, cache, job store and lane), so agent state and jobs are already
+  independent. Today one voice session serves one agent (`?agent=<id>`).
+- `clawvoice/voice/floor.py`: the announcement coordinator and floor state
+  (user/bot speaking, quiet gap, client liveness, stop/dismiss); the natural
+  place for a shared multi-agent speaking floor.
+- `apps/web/`: agent identity, orb states and task panels are driven by agent
+  config.
+
+First decisions for P2a (validate live early, see open question 4): separate
+concurrent Higgs sessions per agent versus one shared listener with per-agent
+voice output; how name addressing routes a turn ("Astra, …") to exactly one
+agent; how one floor prevents overlapping speech across agents. Provision real
+OpenClaw agents for Astra and Jester with their own credentials (never share
+Tari's Google tokens), and keep Tari's behavior and tests green.
 
 ## Priority 2a: multiple independent agents
 
@@ -133,9 +184,9 @@ This story is important product intent even if not all scenes are in the first w
 
 ## Known open questions / decisions to validate
 
-1. P1 planner is committed and documented on the foundation (`e77e9c4`; 78 offline tests and live planner-agent acceptance reported). Confirm the local working checkout and its currently running demo before extending it; inspect actual `day-planner show --json` payloads and permissions.
-2. Google API smoke event was verified at `19:00Z`, corresponding to requested `15:00 America/Toronto`; Google Calendar display appeared to be UTC. The UI settings were not directly inspected. Verify ongoing timezone correctness for voice-originated and recurring writes.
-3. Boson/Pipecat handling of background completion injected into ongoing realtime sessions and natural spoken floor re-entry; validate live rather than relying on fixture-only behavior.
+1. ~~Planner foundation~~ — resolved: the planner is unified with Calendar since `5a78c91`; inspect `day-planner show --json` before changing it.
+2. ~~Timezone~~ — resolved for timed writes (IANA `America/Toronto` metadata, DST-tested); recurring writes remain to be validated live.
+3. ~~Completion notices in a live session~~ — resolved in P1 (floor-aware notices, validated live).
 4. Concurrent Higgs sessions and stable distinct voice selection for P2a; evaluate early before committing to one transport architecture.
 5. Voice UI polish scope after P1: Pipecat stock UI can be retained for functional acceptance; team-orb polished frontend is an explicit later demo goal.
 6. Long-running work persistence and reconnect behavior: build honest observed states first; expand durability when proven necessary.

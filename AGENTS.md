@@ -26,20 +26,31 @@ agent-to-agent collaboration, and eventual shared human/agent rooms.
 
 ## Current milestone
 
-Priority 1 is implemented in `services/voice/` and `apps/web/` (see
-`docs/voice.md`, `docs/voice-validation.md`): one real voiced agent (Tari) with
-a generic OpenClaw adapter, per-agent hot-context cache, nonblocking verified
-jobs and spoken completions, on top of the validated foundation (isolated Docker
-OpenClaw, ChatGPT/Codex OAuth, separate Google account, read-only Gmail,
-Calendar management, persistent planner/checklist).
+**Priority 1 is complete.** Stable baseline: branch `release/p1-stable`, tag
+`v0.1.0` (see `docs/GETTING_STARTED.md`, `docs/voice.md`). One real voiced agent
+(Tari) with a generic OpenClaw adapter, per-agent hot-context cache with live
+fallback, nonblocking verified jobs and spoken completions, read-only Gmail,
+unified Calendar/planner, push-to-talk and stop-speaking. **Next: Priority 2a**
+(multiple independently voiced agents, name routing, one shared floor); start
+from the baseline as described in `docs/ROADMAP_ACCEPTANCE_DEMO.md`.
 
 - Agent specifics belong in `services/voice/agents/*.yaml`; the core runtime
   must not branch on agent names (a test enforces this).
 - "Done" requires an agent receipt plus independent read-back; never report an
   accepted or unverified job as complete.
+- The cache is an accelerator, not a capability boundary or source of truth:
+  topics declare `coverage`; anything outside it is a read-only OpenClaw lookup.
+- Speech interruption, "stop talking" and task cancellation are separate:
+  stopping speech never cancels a job; `cancel_task` is explicit.
+- Gmail's "Primary" means the Primary tab (inbox minus Promotions and Social),
+  never `category:primary`. New timed planner entries are Calendar events;
+  legacy local blocks are never migrated automatically.
 - Keep the two Pipecat compatibility fixes and the exact preview model checks.
-- Multi-agent routing, collaboration and multi-user rooms are later priorities.
+- Workspace skill/helper changes reach the demo only through
+  `manage.py update-workspace` (known-version upgrade with backups).
 
-When user input or account approval is required, stop at a documented checkpoint.
-Tests without real provider access are not proof of live integration.
-Keep development on an isolated feature branch, do not merge or force push.
+When user input or account approval is required (for example WebSocket device
+pairing), stop at a documented checkpoint. Tests without real provider access are
+not proof of live integration. Develop on a feature branch from
+`release/p1-stable`; do not merge, force push or delete branches without the
+owner's request.
