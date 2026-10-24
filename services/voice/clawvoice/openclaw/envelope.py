@@ -21,7 +21,8 @@ def build_message(agent: AgentConfig, job: Job, clock: Clock) -> str:
     if job.kind == "change":
         kind = "CHANGE: the owner explicitly asked for this change. Make exactly this change and nothing else."
     else:
-        kind = "QUESTION: answer it. Do not create, change or delete anything."
+        kind = ("QUESTION: answer it by looking it up with your tools (read-only); ClawVoice's cached view "
+                "is only a shortcut. Say which date range or scope you checked. Do not create, change or delete anything.")
     lines = [
         f"[ClawVoice voice request, task {job.id}]",
         "Your owner is talking with you live through ClawVoice, a voice interface: they speak, and your reply "

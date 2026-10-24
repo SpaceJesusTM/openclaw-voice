@@ -222,6 +222,7 @@ class HotContextCache:
             warnings=list(resolved.warnings),
             day=resolved.day,
             source=resolved.source or spec.resolver,
+            coverage=resolved.coverage or spec.coverage,
             fetched_at=self.clock.now(),
             fetched_mono=self.clock.monotonic(),
             fetch_ms=elapsed_ms,
@@ -354,6 +355,7 @@ class HotContextCache:
             "now_local": now_local.strftime("%A, %B ") + str(now_local.day) + ", " + spoken_clock(now_local),
             "timezone": self.agent.timezone,
             "cache": cache,
+            "covers": (state.snapshot.coverage if state.snapshot else "") or state.spec.coverage,
         }
         snap = state.snapshot
         if kind in ("fresh", "stale", "expired") and snap is not None:
@@ -378,7 +380,8 @@ class HotContextCache:
                 )
             if not snap.complete:
                 notes.append("Some sources were unavailable: say what may be missing. Missing data is not free time.")
-            base["note"] = " ".join(notes) or "Current. Answer from this data only."
+            notes.append(self._beyond(base["covers"]))
+            base["note"] = " ".join(notes)
             return base
         if kind == "invalidated" and snap is not None:
             base.update(
@@ -387,7 +390,7 @@ class HotContextCache:
                 last_known_summary=f"(outdated, before the latest change) {snap.summary}",
                 note=(
                     "Do not present outdated data as current. Say the update is still loading "
-                    "and offer to check again in a moment."
+                    "and offer to check again in a moment, or call delegate_task for a live lookup."
                 ),
             )
             return base
@@ -401,9 +404,21 @@ class HotContextCache:
         base.update(
             status="unavailable",
             reason=state.last_error or "The data has not loaded yet.",
-            note="Say you could not get this right now. Never guess or treat it as empty.",
+            note=(
+                "The fast snapshot is unavailable; that says nothing about the source. Never guess or treat it "
+                f"as empty. Call delegate_task (kind question) so {self.agent.display_name} can look it up live, "
+                "or say you could not check it right now."
+            ),
         )
         return base
+
+    def _beyond(self, covers: str) -> str:
+        return (
+            f"This snapshot covers {covers}. Answer from it only for questions inside that scope. For anything "
+            f"outside it (other dates or periods, more detail, or a live check the owner asks for), call "
+            f"delegate_task (kind question): {self.agent.display_name} can look it up with its own tools. Never "
+            "say something does not exist or cannot be accessed just because this snapshot does not show it."
+        )
 
     # ------------------------------------------------------------- status
     def status(self) -> list[dict[str, Any]]:

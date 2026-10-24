@@ -25,6 +25,7 @@ class Resolved:
     warnings: list[str] = field(default_factory=list)
     day: str | None = None  # ISO date for day-scoped topics (enables rollover checks)
     source: str = ""
+    coverage: str | None = None  # exact scope of this value, e.g. a date window; defaults to the topic's
 
 
 @dataclass
@@ -42,6 +43,7 @@ class Snapshot:
     fetched_mono: float
     fetch_ms: int
     version: int
+    coverage: str = ""
 
 
 @dataclass

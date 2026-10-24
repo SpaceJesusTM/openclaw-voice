@@ -40,15 +40,17 @@ class VoiceTools:
     # ------------------------------------------------------------ schemas
     def schemas(self) -> list[FunctionSchema]:
         topics = self.runtime.agent.topics
-        topic_help = "; ".join(f"{t.key} = {t.description}" for t in topics)
+        topic_help = "; ".join(f"{t.key} = {t.description} (covers {t.coverage})" for t in topics)
         targets = list(self.agent.targets)
         return [
             FunctionSchema(
                 name="get_context",
                 description=(
-                    f"Instant lookup of {self.agent.display_name}'s current context. Call it for every question "
-                    f"about these topics, including repeated ones (the data changes; never reuse an earlier "
-                    f"answer): {topic_help}. Answer only from the result. Questions only: it never does "
+                    f"Instant cached snapshot of part of {self.agent.display_name}'s context; a shortcut, not the "
+                    f"limit of what can be checked. Topics: {topic_help}. Call it for every question inside a "
+                    f"topic's coverage, including repeated ones (the data changes; never reuse an earlier answer), "
+                    f"and answer from the result. For anything outside that coverage, or when the user asks for a "
+                    f"live check, use delegate_task (kind question) instead. Questions only: it never does "
                     f"anything, so a request to do something goes to delegate_task."
                 ),
                 properties={"topic": {"type": "string", "enum": [t.key for t in topics], "description": "Topic key."}},
@@ -60,7 +62,9 @@ class VoiceTools:
                 description=(
                     f"Start a background task for {self.agent.display_name}'s OpenClaw agent: anything the user asks "
                     f"to be done or changed ({', '.join(t for t in targets if t != 'other')} or other: create, "
-                    "update, delete, run, mark), or a question needing its memory, reasoning or tools. Returns "
+                    "update, delete, run, mark), or a read-only question needing its memory, reasoning or tools, "
+                    "including any lookup beyond get_context's coverage (other dates or periods, more detail, a "
+                    "live check). Returns "
                     "immediately with status 'accepted' (NOT done). Call once per request, and only after the "
                     "details of a change are unambiguous."
                 ),

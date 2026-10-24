@@ -151,6 +151,13 @@ async def test_session_payload_advertises_config_built_tools(gateway, fixture_di
         assert "You are Astra" in payload["instructions"]
         # Cached context answers questions; a request to act is always delegated.
         assert "never performs an action" in payload["instructions"]
+        # Same cache-as-accelerator contract for any agent: coverage is stated and beyond it is a live lookup.
+        assert "tests.last: the latest test run result. Covers the most recent test run only." in payload["instructions"]
+        assert "not the limit of what Astra can find out" in payload["instructions"]
+        assert "Never say you cannot access something, or that nothing exists" in payload["instructions"]
+        assert "(covers the most recent test run only)" in by_name["get_context"]["description"]
+        assert "live check" in by_name["get_context"]["description"]
+        assert "beyond get_context's coverage" in by_name["delegate_task"]["description"]
         assert "a request to do something goes to delegate_task" in by_name["get_context"]["description"]
         # Every tool is asynchronous: barge-in never cancels a tool call.
         llm._sync_registered_tool_handlers(tools)

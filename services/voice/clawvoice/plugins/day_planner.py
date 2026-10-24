@@ -184,6 +184,7 @@ async def planner_day(ctx: ResolverContext, spec: TopicSpec) -> Resolved:
         warnings=warnings,
         day=day.isoformat(),
         source="day-planner show --json",
+        coverage=f"the planner for {label} only (Calendar events, planner blocks, commutes) and the open checklist",
     )
 
 
@@ -209,6 +210,7 @@ async def calendar_day(ctx: ResolverContext, spec: TopicSpec) -> Resolved:
         warnings=[] if calendar_ok else _warnings(data),
         day=day.isoformat(),
         source="day-planner show --json (Calendar entries)",
+        coverage=f"Google Calendar events on {label} only",
     )
 
 
@@ -279,6 +281,7 @@ async def calendar_next(ctx: ResolverContext, spec: TopicSpec) -> Resolved:
         warnings=warnings,
         day=today.isoformat(),
         source="day-planner show --json (Calendar entries, multiple days)",
+        coverage=f"timed Google Calendar events from now through {day_label(last_day, ctx.tz, ctx.clock)} only",
     )
 
 
@@ -301,7 +304,8 @@ async def checklist_focus(ctx: ResolverContext, spec: TopicSpec) -> Resolved:
         if view["other_open_count"]:
             parts.append(f"Plus {_plural(view['other_open_count'], 'other open task')}.")
         summary = " ".join(parts)
-    return Resolved(value=view, summary=summary, source="day-planner checklist --json")
+    return Resolved(value=view, summary=summary, source="day-planner checklist --json",
+                    coverage="all open checklist tasks (task names and statuses; completed tasks are not listed)")
 
 
 # ---------------------------------------------------------------- verifiers

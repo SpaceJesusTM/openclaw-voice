@@ -30,6 +30,9 @@ class ConfigError(ValueError):
     """Agent configuration is invalid; the message names the file and field."""
 
 
+DEFAULT_COVERAGE = "only what this snapshot shows"
+
+
 @dataclass(frozen=True)
 class TopicSpec:
     key: str
@@ -40,6 +43,8 @@ class TopicSpec:
     max_staleness_seconds: float
     idle_refresh_seconds: float
     read_wait_seconds: float
+    # What the snapshot can answer. Anything outside it is a live lookup, not "nothing".
+    coverage: str = DEFAULT_COVERAGE
 
 
 @dataclass(frozen=True)
@@ -221,6 +226,7 @@ def parse_agent(data: dict[str, Any], *, source: Path, base: Path) -> AgentConfi
                 max_staleness_seconds=max_stale,
                 idle_refresh_seconds=_number(merged, "idle_refresh_seconds", max(ttl, 900), at, 1),
                 read_wait_seconds=_number(merged, "read_wait_seconds", 3.0, at, 0),
+                coverage=" ".join(str(raw.get("coverage") or DEFAULT_COVERAGE).split()),
             )
         )
 

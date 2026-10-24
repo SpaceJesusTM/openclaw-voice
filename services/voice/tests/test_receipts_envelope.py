@@ -66,5 +66,7 @@ def test_question_envelope_forbids_changes():
               request="What did we decide yesterday?", title="t", expectations={}, user_words="", origin_session=None,
               tool_call_id=None, fingerprint="f", idempotency_key="k")
     message = build_message(agent, job, FrozenClock(datetime(2026, 10, 23, 12, 0, tzinfo=ZoneInfo("UTC"))))
-    assert "QUESTION: answer it. Do not create, change or delete anything." in message
+    assert "QUESTION: answer it by looking it up with your tools (read-only)" in message
+    assert "Do not create, change or delete anything." in message
+    assert "Say which date range or scope you checked." in message
     assert "Details the voice assistant resolved" not in message

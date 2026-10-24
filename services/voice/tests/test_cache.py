@@ -233,3 +233,62 @@ async def test_scheduler_warms_topics_and_handles_rollover(clock):
         assert source.calls > calls
     finally:
         await cache.stop()
+
+
+# --------------------------------------------------- coverage and live fallback
+async def test_reading_states_its_coverage_and_the_live_fallback(clock):
+    """The cache is an accelerator: every answer says what it covers and how to go beyond it."""
+    source = Source()
+    cache = build([{**TOPIC, "coverage": "today's widgets only"}], source, clock)
+    await cache.refresh_now("t.one")
+    reading = await cache.get("t.one")
+    assert reading["status"] == "fresh" and reading["covers"] == "today's widgets only"
+    assert "covers today's widgets only" in reading["note"]
+    assert "delegate_task (kind question)" in reading["note"]
+    assert "Never say something does not exist or cannot be accessed" in reading["note"]
+    assert "Answer from this data only" not in reading["note"]
+
+
+async def test_resolver_can_narrow_coverage_to_the_exact_window(clock):
+    source = Source()
+    cache = build([TOPIC], source, clock)
+    original = cache.registry.resolvers["stub"]
+
+    async def windowed(ctx, spec):
+        resolved = await original(ctx, spec)
+        resolved.coverage = "events through Monday, October 26 only"
+        return resolved
+
+    cache.registry.resolvers["stub"] = windowed
+    await cache.refresh_now("t.one")
+    assert (await cache.get("t.one"))["covers"] == "events through Monday, October 26 only"
+
+
+async def test_default_coverage_never_claims_completeness(clock):
+    cache = build([TOPIC], Source(), clock)
+    await cache.refresh_now("t.one")
+    reading = await cache.get("t.one")
+    assert reading["covers"] == "only what this snapshot shows"
+
+
+async def test_incomplete_or_unavailable_is_not_proof_of_absence(clock):
+    source = Source()
+    cache = build([TOPIC], source, clock)
+    original = cache.registry.resolvers["stub"]
+
+    async def partial(ctx, spec):
+        resolved = await original(ctx, spec)
+        resolved.complete = False
+        return resolved
+
+    cache.registry.resolvers["stub"] = partial
+    await cache.refresh_now("t.one")
+    reading = await cache.get("t.one")
+    assert reading["complete"] is False and "may be missing" in reading["note"] and "delegate_task" in reading["note"]
+    down_source = Source()
+    down = build([TOPIC], down_source, clock)
+    down_source.fail = True
+    await down.refresh_now("t.one")
+    gone = await down.get("t.one")
+    assert gone["status"] == "unavailable" and "data" not in gone
+    assert "says nothing about the source" in gone["note"] and "delegate_task" in gone["note"]

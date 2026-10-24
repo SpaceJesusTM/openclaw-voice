@@ -475,6 +475,9 @@ class JobManager:
         invalidate_all: bool = False,
     ) -> None:
         job.status = status
+        if job.kind == "question" and status in ("failed", "cancelled"):
+            # An unanswered lookup must never be relayed as "nothing found".
+            outcome_text += " The lookup did not complete, so nothing can be concluded about it yet."
         job.outcome_text = " ".join(outcome_text.split())[:900]
         job.side_effects_possible = side_effects
         if status in ("failed", "uncertain", "cancelled") and not job.error:

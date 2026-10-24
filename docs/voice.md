@@ -279,6 +279,20 @@ topics roll over at local midnight in the agent's IANA zone (23/25-hour DST
 days included). Incomplete sources (for example an unreadable Calendar) are
 kept with `complete: false` and warnings.
 
+**Coverage and live fallback.** The cache is an accelerator, not a capability
+boundary or a source of truth. Each topic declares `coverage` (for example
+"Google Calendar events today only"), and a resolver can narrow it to the exact
+window it read ("timed Google Calendar events from now through Monday, October
+26 only"). Every `get_context` result carries `covers` and a note: answer from
+the snapshot only inside that scope. For anything outside it (another date or
+period, more detail, or when the owner asks for a live check), Higgs calls
+`delegate_task` with kind `question`. The OpenClaw agent then looks it up
+read-only with its own tools and says which range it checked, and the result
+arrives as a normal background notice. An unavailable, incomplete or narrow
+snapshot is never treated as proof that nothing exists. A lookup that fails says
+so ("nothing can be concluded"), never "no results". Broad questions without a
+period get a clarifying question or a clearly bounded search.
+
 Writes: after any change job ends (verified or not), the topics listed by the
 receipt types are invalidated and re-read from the source; an invalidation that
 arrives while a refresh is running forces another read, so answers after a write
@@ -297,6 +311,7 @@ hot_context:
   topics:
     - key: project.active
       description: "the active project's status"     # also shown to the voice model
+      coverage: "the active project's current status only"   # beyond this, Higgs delegates a live lookup
       resolver: command_json
       args: {helper: project, argv: [status, --json], summary_field: summary}
       ttl_seconds: 180

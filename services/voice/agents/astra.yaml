@@ -35,6 +35,7 @@ hot_context:
   topics:
     - key: project.active
       description: "the active project's status and open tasks"
+      coverage: "the active project's current status and open task count only"
       resolver: command_json
       args:
         helper: project
@@ -43,10 +44,12 @@ hot_context:
         value_fields: [name, branch, open_tasks]
     - key: tests.last
       description: "the latest test run result"
+      coverage: "the most recent test run only"
       resolver: command_json
       args: {helper: project, argv: [tests, --json], summary_field: summary}
     - key: jobs.recent
       description: "background tasks in progress and recent results"
+      coverage: "the most recent ClawVoice background tasks only"
       resolver: recent_jobs
       ttl_seconds: 30
 

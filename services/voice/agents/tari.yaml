@@ -43,26 +43,32 @@ hot_context:
   topics:
     - key: planner.today
       description: "today's day planner: Calendar events, planner blocks, commutes and a checklist summary"
+      coverage: "today's planner only"
       resolver: planner_day
       args: {day: today}
     - key: planner.tomorrow
       description: "tomorrow's day planner (Calendar events, planner blocks, commutes)"
+      coverage: "tomorrow's planner only"
       resolver: planner_day
       args: {day: tomorrow}
     - key: calendar.today
       description: "today's Google Calendar events only"
+      coverage: "Google Calendar events today only"
       resolver: calendar_day
       args: {day: today}
     - key: calendar.next
       description: "the next upcoming Calendar event or meeting"
+      coverage: "timed Google Calendar events in the next 3 days only"
       resolver: calendar_next
       args: {horizon_days: 3}
     - key: checklist.focus
       description: "checklist priority and in-progress tasks"
+      coverage: "open checklist tasks and their statuses"
       resolver: checklist_focus
       ttl_seconds: 300
     - key: jobs.recent
       description: "background tasks in progress and recent results"
+      coverage: "the 5 most recent ClawVoice background tasks only"
       resolver: recent_jobs
       args: {limit: 5}
       ttl_seconds: 30

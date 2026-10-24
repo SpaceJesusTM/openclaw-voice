@@ -264,6 +264,20 @@ async def test_unreachable_gateway_fails_without_side_effects(fixture_dir):
         await runtime.stop()
 
 
+async def test_unreachable_backend_lookup_is_an_honest_failure_not_an_empty_answer(fixture_dir):
+    runtime = await runtime_for(astra_config(9, transport="http"), fixture_dir)  # nothing listens on port 9
+    try:
+        job, _ = runtime.jobs.submit(request="What events do I have in January 2027?", kind="question", target="other")
+        await until(finished(runtime, job.id))
+        done = runtime.jobs.get(job.id)
+        assert done.status == "failed" and not done.side_effects_possible
+        assert "Could not hand the task" in done.outcome_text
+        assert "nothing can be concluded" in done.outcome_text
+        assert done.announcement["state"] == "pending"  # the owner is told it failed
+    finally:
+        await runtime.stop()
+
+
 async def test_restart_recovers_or_marks_uncertain(gateway, fixture_dir):
     gateway.delay_scale = 1.0
     agent = astra_config(gateway.port)

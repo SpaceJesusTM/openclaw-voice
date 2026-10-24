@@ -87,6 +87,9 @@ async def test_calendar_views(agent):
     assert today.summary == "Calendar today, Friday, October 23: Project Meeting, 3 to 4 PM; Reading week (all day)."
     nxt = await day_planner.calendar_next(ctx(agent), agent.topic("calendar.next"))
     assert nxt.summary == "Your next Calendar event is Project Meeting, today, Friday, October 23, 3 to 4 PM."
+    # Coverage states the exact window, so nothing outside it reads as "no events".
+    assert today.coverage == "Google Calendar events on today, Friday, October 23 only"
+    assert nxt.coverage == "timed Google Calendar events from now through Sunday, October 25 only"
     during = FrozenClock(datetime(2026, 10, 23, 15, 30, tzinfo=TORONTO))
     current = await day_planner.calendar_next(ctx(agent, during), agent.topic("calendar.next"))
     assert current.summary.startswith("You're in Project Meeting right now, until 4 PM.")

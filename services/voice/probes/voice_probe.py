@@ -22,6 +22,9 @@ truncation events and independent helper read-backs, not on model wording.
   g  an ambiguous request gets a clarifying question, not a job; then a
      Calendar create, a verified time change of the same event, and delete
   h  checklist add verified and visible in the cached checklist; removal
+  i  cache vs live: today from the cache (no job); January 2027, an explicit
+     live check and a broad question go to OpenClaw or a clarifying question,
+     verified in OpenClaw's own transcript; disposable January event removed
 
 The disposable Calendar event and planner items use unique "ClawVoice ..."
 titles, tomorrow/today only, no attendees, and are removed at the end.
@@ -35,10 +38,11 @@ import asyncio
 import json
 import random
 import re
+import sqlite3
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -716,9 +720,104 @@ async def scenario_h(url: str, timeout: float, out: dict) -> dict:
     return out
 
 
+REFUSAL = re.compile(r"can.?t access|cannot access|don.?t have access|no access|only (?:see|have)|my cache|cache (?:only|ends)")
+OPENCLAW_DB = REPO / "infra/openclaw/.local/state/agents/tari/agent/openclaw-agent.sqlite"
+VOICE_SESSION_KEY = "agent:tari:clawvoice-local-owner"
+
+
+def openclaw_commands(since_ms: int) -> list[str]:
+    """Commands Tari's OpenClaw agent ran since a time, read-only from its own transcript."""
+    db = sqlite3.connect(f"file:{OPENCLAW_DB}?mode=ro", uri=True)
+    try:
+        row = db.execute("select current_session_id from session_nodes where session_key=?", (VOICE_SESSION_KEY,)).fetchone()
+        require(row, "ClawVoice OpenClaw session not found")
+        events = db.execute("select event_json from transcript_events where session_id=? and created_at>=? "
+                            "and event_json is not null order by seq", (row[0], since_ms)).fetchall()
+    finally:
+        db.close()
+    commands = []
+    for (raw,) in events:
+        message = json.loads(raw).get("message") or {}
+        for part in message.get("content") or [] if isinstance(message, dict) else []:
+            if isinstance(part, dict) and part.get("type") == "toolCall":
+                arguments = part.get("arguments") or {}
+                commands.append(str(arguments.get("code") or arguments.get("command") or arguments))
+    return commands
+
+
+async def scenario_i(url: str, timeout: float, out: dict) -> dict:
+    """The cache is an accelerator, not a boundary: covered questions are cache hits;
+    anything outside coverage becomes a read-only OpenClaw lookup, verified in
+    OpenClaw's own transcript. A disposable event in January 2027 proves real results."""
+    title = unique("ClawVoice Jan Probe")
+    day = date(2027, 1, 14)
+    tomorrow = datetime.now(TZ).date() + timedelta(days=1)
+    out.update(title=title, date=day.isoformat())
+    require(not [e for e in calendar_events_on(day) if e.get("summary") == title], "title already exists")
+    manage("google", "calendar", "manage", "create", "primary", "--summary", title,
+           "--from", f"{day.isoformat()}T10:00:00-05:00", "--to", f"{day.isoformat()}T11:00:00-05:00", "--send-updates", "none")
+    require(len([e for e in calendar_events_on(day) if e.get("summary") == title]) == 1, "January probe event not created")
+    probe = Probe(url, timeout)
+    try:
+        await probe.connect()
+        await greet(probe, url)
+        # 1. Covered by the cache: instant answer, no OpenClaw run.
+        jobs_before = len((await api(url, "/api/state?agent=tari"))["jobs"])
+        ask = await probe.say("What's on my Calendar today?")
+        out["today_reply"] = await probe.wait_turn(ask, "today from cache")
+        reads = [t for t in probe.tools(ask, "get_context") if t.get("topic") in ("calendar.today", "planner.today")]
+        out["today_tools"] = [(t["name"], t.get("topic"), t.get("status"), t.get("cache")) for t in probe.tools(ask)]
+        require(reads and reads[0]["status"] == "fresh", "today's Calendar was not answered from a fresh cache read")
+        require(not probe.tools(ask, "delegate_task"), "a covered question started an OpenClaw job")
+        require(len((await api(url, "/api/state?agent=tari"))["jobs"]) == jobs_before, "a job was created for a cached answer")
+        # 2. Outside coverage: January 2027 must be looked up live, not refused.
+        since = int(time.time() * 1000) - 1000
+        ask = await probe.say("What events do I have in January 2027?")
+        job = await wait_job(probe, ask, "January lookup", 300)
+        out["january_job"] = {k: job.get(k) for k in ("kind", "target", "status", "outcome_text", "transport")}
+        out["january_ack"] = probe.bot_text(ask)
+        require(job["kind"] == "question", "the lookup was not delegated as a read-only question")
+        require(job["status"] == "completed", f"January lookup did not complete: {job.get('outcome_text')}")
+        require(not REFUSAL.search(norm(out["january_ack"])), "Tari claimed it could not access January")
+        bird = title.split()[-2:]
+        require(all(w.lower() in norm(job["outcome_text"]) for w in bird), "January answer missed the real event")
+        commands = openclaw_commands(since)
+        out["january_commands"] = [c[:200] for c in commands]
+        require(any("2027-01" in c and ("tari-google" in c or "day-planner" in c) for c in commands),
+                "OpenClaw did not run a Calendar query for January 2027")
+        out["january_announcement"] = await probe.wait_turn(probe.mark(), "January announcement", timeout=90)
+        require(all(w.lower() in norm(out["january_announcement"]) for w in bird), "spoken answer missed the event")
+        # 3. Explicit live check of a covered day still goes to OpenClaw.
+        since = int(time.time() * 1000) - 1000
+        ask = await probe.say("Can you actually check Google Calendar live, not the cache, for tomorrow?")
+        live = await wait_job(probe, ask, "explicit live check", 300)
+        out["live_job"] = {k: live.get(k) for k in ("kind", "status", "outcome_text")}
+        require(live["kind"] == "question" and live["status"] == "completed", "explicit live check did not run")
+        commands = openclaw_commands(since)
+        out["live_commands"] = [c[:200] for c in commands]
+        require(any(("tari-google" in c or "day-planner" in c) and (tomorrow.isoformat() in c or "tomorrow" in c)
+                    for c in commands), "OpenClaw did not query tomorrow's Calendar")
+        await probe.wait_turn(probe.mark(), "live check announcement", timeout=90)
+        # 5. Broad question: clarify or a clearly bounded live search, never "nothing else" from the cache.
+        ask = await probe.say("Are there any other events in my Calendar?")
+        out["broad_reply"] = await probe.wait_turn(ask, "broad question", timeout=60)
+        delegated = probe.tools(ask, "delegate_task")
+        out["broad_delegated"] = bool(delegated)
+        require(delegated or "?" in out["broad_reply"], "broad question was neither clarified nor looked up")
+        require(not REFUSAL.search(norm(out["broad_reply"])), "broad answer treated the cache as the limit")
+        if delegated:
+            await settle_jobs(url)
+    finally:
+        await probe.close()
+        out["session"] = probe.report()
+        await settle_jobs(url)
+        out["cleanup"] = await remove_disposable_events(url, day, title)
+    return out
+
+
 SCENARIOS = {
     "a": scenario_a, "b": scenario_b, "c": scenario_c, "d": scenario_d, "e": scenario_e,
-    "f": scenario_f, "g": scenario_g, "h": scenario_h,
+    "f": scenario_f, "g": scenario_g, "h": scenario_h, "i": scenario_i,
 }
 
 
@@ -752,10 +851,10 @@ if __name__ == "__main__":
     parser.add_argument("--live", action="store_true", help="Explicitly allow live Boson/OpenClaw/Google calls")
     parser.add_argument("--url", default="http://127.0.0.1:7860")
     parser.add_argument("--fixture-url", default="http://127.0.0.1:7861", help="Server running the fixture agent (f)")
-    parser.add_argument("--scenario", default="all", help="a-h, comma separated, or all (= a-e, g, h; f needs the fixture servers)")
+    parser.add_argument("--scenario", default="all", help="a-i, comma separated, or all (= a-e, g, h, i; f needs the fixture servers)")
     parser.add_argument("--timeout", type=float, default=90)
     args = parser.parse_args()
     if not args.live:
         parser.error("Pass --live to run live tests; --help makes no connection")
-    chosen = list("abcdegh") if args.scenario == "all" else [s.strip() for s in args.scenario.split(",")]
+    chosen = list("abcdeghi") if args.scenario == "all" else [s.strip() for s in args.scenario.split(",")]
     raise SystemExit(asyncio.run(main(args.url.rstrip("/"), chosen, args.timeout, args.fixture_url.rstrip("/"))))
