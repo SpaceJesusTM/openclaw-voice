@@ -4,7 +4,9 @@
 
 const RATE = 24000;
 const CHUNK = RATE / 10; // 100 ms
-const COLORS = { planner: "var(--p0)", coder: "var(--p2)", jester: "var(--p1)", you: "var(--human)" };
+// One color per agent, in roster order (set when the room is ready), so any cast works.
+const PALETTE = ["var(--p0)", "var(--p2)", "var(--p1)", "var(--p3)", "var(--p4)"];
+const COLORS = { you: "var(--human)" };
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -167,8 +169,9 @@ function onError(text) {
 }
 
 function onReady(msg) {
+  msg.agents.forEach((a, i) => (COLORS[a.name] = PALETTE[i % PALETTE.length]));
   els.tiles.replaceChildren(...msg.agents.map(agentTile));
-  els.overseerModel.textContent = `never speaks · one tool: call_agent · ${msg.overseerModel}`;
+  els.overseerModel.textContent = `never speaks · acts only through tools (call_agent, answer_approval) · ${msg.overseerModel}`;
   els.intro.hidden = true;
   els.room.hidden = false;
   setStatus("Live", "live");

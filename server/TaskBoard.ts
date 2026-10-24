@@ -56,8 +56,9 @@ export class TaskBoard {
 
   /**
    * Start a task, unless the same owner already has one with the same title
-   * running or waiting: agents asked the same thing (planner, then coder once
-   * swapped in) both called start_task for it. Then that task is returned.
+   * running or waiting: two agents asked the same thing (the one you were
+   * talking to, then the owner once swapped in) both called start_task for it.
+   * Then that task is returned.
    */
   start(owner: AgentName, title: string): { task: Task; created: boolean } {
     const clean = title.trim().slice(0, 120) || "a task";

@@ -14,6 +14,12 @@ It follows Boson's
 raw WebSockets. How the silent overseer works, and everything learned building
 it: [docs/silent-overseer.md](docs/silent-overseer.md).
 
+The cast is one list, `ROSTER` in
+[src/agent/selectorAgents.ts](src/agent/selectorAgents.ts): each agent's
+name, voice, role, and what it covers. Persona prompts, the overseer's prompt
+and routing hints, and the page are built from it, so adding or removing an
+agent is one entry.
+
 ## Run it
 
 Double-click **`start.bat`** (Windows). The first time, it installs

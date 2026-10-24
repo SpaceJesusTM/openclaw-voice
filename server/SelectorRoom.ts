@@ -11,14 +11,14 @@ import { TaskBoard, type Task, type TaskAlert } from "./TaskBoard";
 
 /**
  * Higgs 1.5 for the overseer, as for the agents. Higgs 1 decided faster (~0.5 s
- * after you stop) but misheard requests on raw audio ("Coder, quick one" ->
- * jester); routing stays on audio, so it gets the better listener.
+ * after you stop) but misheard requests on raw audio (one naming an agent
+ * went to another); routing stays on audio, so it gets the better listener.
  */
 const OVERSEER_MODEL = MODEL;
 /**
  * Pipecat's example settings, but 700 ms of silence instead of 500: at 500 a
  * pause between sentences ended the turn, and the overseer misjudged the
- * fragment ("Okay, that makes sense." -> planner). turn_detection can't change
+ * fragment ("Okay, that makes sense." went to another agent). turn_detection can't change
  * after session start (probed 2026-10-24), so only the overseer has it.
  */
 const VAD = { type: "server_vad" as const, threshold: 0.85, prefix_padding_ms: 300, silence_duration_ms: 700 };
@@ -48,9 +48,9 @@ const ALERT_GAP_MS = 1200;
  *
  *   overseer  text out, never speaks. Hears your mic with server VAD, so it
  *             decides on every turn you take; calls call_agent to switch.
- *   planner / coder / jester  audio out, manual turns. All three hear every
- *             turn (yours and each other's, as real audio); only the active
- *             one is asked to reply. Planner starts.
+ *   agents    one per persona in PERSONAS; audio out, manual turns. All of
+ *             them hear every turn (yours and each other's, as real audio);
+ *             only the active one is asked to reply. The first persona starts.
  *
  * Drafting early: at a 200 ms pause in your turn (a level gate on the mic),
  * the active agent hears your turn so far and starts a reply that is held,
@@ -73,7 +73,7 @@ const ALERT_GAP_MS = 1200;
 export class SelectorRoom {
   private overseer: RealtimeSession | null = null;
   private voices = new Map<AgentName, SelectorVoice>();
-  private active: AgentName = "planner";
+  private active: AgentName = PERSONAS[0].name;
   /** The reply being played (or about to be). */
   private current: Reply | null = null;
   /**
@@ -111,7 +111,7 @@ export class SelectorRoom {
    * The answer to an approval request belongs to the agent who asked it. Owners
    * of approval requests just heard (`asked`), and of the ones your current turn
    * is answering (`answering`): the overseer can't swap to them for that turn.
-   * Its tool description said so, and it still swapped to Coder on "Yes, approve it".
+   * Its tool description said so, and it still swapped to the task's owner on "Yes, approve it".
    */
   private approvals = { asked: new Set<AgentName>(), answering: new Set<AgentName>(), replied: false };
   private board = new TaskBoard(
@@ -184,7 +184,11 @@ export class SelectorRoom {
       active: this.active,
     });
     this.overseer.send(textItem(`(Note: ${this.active} is talking with the user now.)`));
-    this.reply(this.active, "(Note: the user just joined the call. Greet them in one or two sentences as Planner, and mention Coder and Jester are here too.)");
+    const others = PERSONAS.filter((p) => p.name !== this.active).map((p) => cap(p.name));
+    this.reply(
+      this.active,
+      `(Note: the user just joined the call. Greet them in one or two sentences as ${cap(this.active)}, and mention ${others.join(" and ")} ${others.length === 1 ? "is" : "are"} here too.)`,
+    );
   }
 
   /** One chunk of the tab's mic: always to the overseer, kept so each turn can be sliced out for the agents. */
