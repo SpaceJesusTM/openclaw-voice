@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""Gmail reads and native Google Calendar management for the isolated demo.
+
+This is an application guardrail, not a sandbox for an agent with shell access.
+OAuth scopes remain the independent server-side permission boundary.
+"""
+import argparse
+from datetime import date, datetime
+import json
+import os
+import re
+import subprocess
+import sys
+from zoneinfo import ZoneInfo
+
+
+class GoogleError(Exception):
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
+MAX_OUTPUT = 8 * 1024 * 1024
+MAX_PAGES = 20
+EVENT_FIELDS = ("id", "iCalUID", "etag", "summary", "description", "location", "start", "end",
+                "status", "transparency", "attendees", "organizer", "creator",
+                "extendedProperties", "recurrence", "recurringEventId", "originalStartTime", "htmlLink")
+
+
+def account():
+    value = os.environ.get("TARI_GOOGLE_ACCOUNT", "")
+    if not re.fullmatch(r"[^\s@-][^\s@]*@[^\s@]+", value):
+        raise GoogleError("Set TARI_GOOGLE_ACCOUNT to the explicit Google account email.")
+    return value
+
+
+def identifier(value):
+    if not isinstance(value, str) or not value or value.startswith("-") or len(value) > 1024 or any(ord(c) < 32 for c in value):
+        raise argparse.ArgumentTypeError("Invalid identifier")
+    return value
+
+
+def timestamp(value):
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError()
+        return parsed.isoformat()
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Use an ISO 8601 timestamp with UTC offset") from exc
+
+
+def run_gog(command, exact, calendar_management=False, allow_absent=False):
+    """Build argv without a shell; keep account/profile and Google service fixed."""
+    allowed = {"gmail.messages.search", "gmail.get", "calendar.calendars",
+               "calendar.events", "calendar.event"}
+    if calendar_management:
+        if exact != "calendar" or not command or command[0] != "calendar":
+            raise GoogleError("Calendar management cannot invoke another Google service.")
+    elif exact not in allowed:
+        raise GoogleError("Only approved Google reads are available.")
+    client = "tari-calendar-write" if calendar_management else "tari-read"
+    cmd = ["gog", "--account", account(), "--client", client,
+           "--json", "--no-input", "--gmail-no-send",
+           "--enable-commands" if calendar_management else "--enable-commands-exact", exact]
+    cmd.append("--force" if calendar_management else "--readonly")
+    cmd.extend(command)
+    # Preserve only storage/auth settings; inherited gog options cannot reroute
+    # requests, credentials, command guards, or pagination envelopes.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GOG_")}
+    for key in ("GOG_HOME", "GOG_KEYRING_BACKEND", "GOG_KEYRING_PASSWORD"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    env["GOG_ACCOUNT"] = account()
+    env["GOG_CLIENT"] = client
+    env["GOG_TIMEZONE"] = os.environ.get("TARI_TIMEZONE", "America/Toronto")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env, check=False)
+    except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+        raise GoogleError("Google command unavailable or timed out; no result was verified.") from exc
+    if result.returncode:
+        # Do not print upstream stderr: it may contain tokens or private response bodies.
+        match = re.search(r"(?:googleapi: Error |HTTP(?: status)?[ :]+)(404|410)\b", result.stderr)
+        if allow_absent and match:
+            return {"absent": True}
+        raise GoogleError("Google request failed; check owner-managed authentication and scopes.")
+    if len(result.stdout) > MAX_OUTPUT:
+        raise GoogleError("Google output exceeded the safe size limit; narrow the date/query range.")
+    try:
+        output = json.loads(result.stdout)
+    except (ValueError, TypeError) as exc:
+        raise GoogleError("Google returned invalid JSON; result is unverified.") from exc
+    if not isinstance(output, (dict, list)):
+        raise GoogleError("Google returned an unexpected result shape.")
+    return output
+
+
+def collection(command, exact, key):
+    items, seen = [], set()
+    page = None
+    for _ in range(MAX_PAGES):
+        output = run_gog(command + (["--page", page] if page else []), exact)
+        rows = output if isinstance(output, list) else output.get(key, output.get("items"))
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise GoogleError("Google returned an unexpected list shape; completeness is unknown.")
+        items.extend(rows)
+        page = output.get("nextPageToken") if isinstance(output, dict) else None
+        if not page:
+            return items
+        if not isinstance(page, str) or page in seen:
+            break
+        identifier(page)
+        seen.add(page)
+    raise GoogleError("Google pagination is incomplete; narrow the date/query range.")
+
+
+def calendars():
+    rows = collection(["calendar", "calendars", "--max", "100"], "calendar.calendars", "calendars")
+    if not rows or any(not isinstance(row.get("id"), str) or not row["id"] for row in rows):
+        raise GoogleError("Calendar discovery is empty or incomplete; do not infer free time.")
+    return [{k: row[k] for k in ("id", "summary", "accessRole", "primary", "timeZone") if k in row}
+            for row in rows]
+
+
+def event(calendar_id, event_id, allow_absent=False):
+    options = {"allow_absent": True} if allow_absent else {}
+    output = run_gog(["calendar", "event", calendar_id, event_id], "calendar.event", **options)
+    if allow_absent and isinstance(output, dict) and output.get("absent") is True:
+        return output
+    row = output.get("event", output) if isinstance(output, dict) else None
+    if not isinstance(row, dict) or not valid_event(row) or row["id"] != event_id:
+        raise GoogleError("Google returned no verifiable event.")
+    return {**{k: row[k] for k in EVENT_FIELDS if k in row}, "calendar_id": calendar_id}
+
+
+def valid_event(row):
+    if not isinstance(row.get("id"), str) or not row["id"]:
+        return False
+    if row.get("status") == "cancelled":
+        return True
+    for key in ("start", "end"):
+        boundary = row.get(key)
+        if not isinstance(boundary, dict):
+            return False
+        try:
+            if "dateTime" in boundary:
+                timestamp(boundary["dateTime"])
+            else:
+                date.fromisoformat(boundary["date"])
+        except (KeyError, TypeError, ValueError, AttributeError, argparse.ArgumentTypeError):
+            return False
+    return True
+
+
+def sanitize_mail(value):
+    """Conservatively withhold security mail and URLs before agent context.
+
+    This is a best-effort content filter, not a guarantee against arbitrary
+    secrets embedded in ordinary messages. Keep real account data out of demos.
+    """
+    security = re.compile(
+        r"verif(?:y|ication)|one[ -]?time|\botp\b|security code|auth(?:entication|orization) code|"
+        r"sign[ -]?in code|login code|password|account recovery|recovery (?:code|link)|"
+        r"reset (?:code|link)|passcode|two[ -]?(?:factor|step)|\b2fa\b|backup codes?|"
+        r"security alert|account security|new (?:sign[ -]?in|login)|signed in|suspicious (?:activity|login)", re.I)
+    def clean(item, sensitive=False, key=""):
+        if isinstance(item, dict):
+            # Apply to a whole message so a subject can protect a numeric body.
+            sensitive = sensitive or ("messages" not in item and bool(security.search(json.dumps(item))))
+            return {k: clean(v, sensitive, k) for k, v in item.items()}
+        if isinstance(item, list):
+            return [clean(v, sensitive, key) for v in item]
+        if isinstance(item, str):
+            if key in {"id", "messageId", "threadId", "nextPageToken", "internalDate", "internalDateIso", "date", "labelIds"}:
+                return item
+            if key == "labels" and re.fullmatch(r"[A-Z_]+", item):  # system labels such as CATEGORY_UPDATES
+                return item
+            if sensitive or re.fullmatch(r"\s*\d{4,8}\s*", item):
+                return "[security-related content withheld]"
+            return re.sub(r"https?://[^\s<>]+", "[link withheld]", item)
+        return item
+    return clean(value)
+
+
+SEPARATE_TABS = ("promotions", "social", "updates", "forums")
+
+
+def primary_scope():
+    """Gmail's Primary tab: the inbox minus the category tabs shown separately.
+
+    The API gives each message one category label, and `category:primary`
+    matches only CATEGORY_PERSONAL. With Gmail's default tabs (Primary,
+    Promotions, Social), Updates and Forums mail appears in the Primary tab, so
+    by default only Promotions and Social are excluded. The API cannot read the
+    owner's tab settings; TARI_GMAIL_SEPARATE_TABS overrides the list.
+    """
+    raw = os.environ.get("TARI_GMAIL_SEPARATE_TABS", "promotions,social")
+    tabs = [tab.strip().lower() for tab in raw.split(",") if tab.strip()]
+    if any(tab not in SEPARATE_TABS for tab in tabs):
+        raise GoogleError("TARI_GMAIL_SEPARATE_TABS may list only promotions, social, updates and forums.")
+    return " ".join(["in:inbox", *(f"-category:{tab}" for tab in tabs)])
+
+
+def received(row):
+    """Receipt time for ordering; rows without a parseable time sort last."""
+    try:
+        return datetime.fromisoformat(str(row.get("internalDateIso"))).timestamp()
+    except ValueError:
+        return float("-inf")
+
+
+def message_rows(result):
+    rows = result.get("messages") if isinstance(result, dict) else result
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get("id") for row in rows):
+        raise GoogleError("Google returned an unexpected message list; completeness is unknown.")
+    return rows
+
+
+def search_mail(args):
+    """Search, then order by receipt time instead of trusting the API's list order."""
+    criteria = args.query.strip()
+    query = criteria if args.all_mail else primary_scope() + (" (" + criteria + ")" if criteria else "")
+    if not 1 <= args.max <= 100 or not query.strip() or len(query) > 2200 or query.startswith("-"):
+        raise GoogleError("Use a bounded Gmail query and --max between 1 and 100.")
+    # Without a page token, fetch at least 20 so a small --max is the newest of a real sample.
+    fetch = args.max if args.page else min(100, max(args.max, 20))
+    command = ["gmail", "messages", "search", query, "--max", str(fetch)] + (["--page", args.page] if args.page else [])
+    result = run_gog(command, "gmail.messages.search")
+    rows = sorted(message_rows(result), key=received, reverse=True)
+    data = {"messages": rows[:args.max]}
+    if isinstance(result, dict) and result.get("nextPageToken") and len(rows) <= args.max:
+        data["nextPageToken"] = result["nextPageToken"]
+    output = {"data": sanitize_mail(data), "query": query, "order": "newest_first",
+              "scope": "explicit" if args.all_mail else "primary_tab"}
+    if len(rows) > args.max:
+        output["more"] = "More matching messages exist; repeat with a larger --max to see them."
+    if not args.all_mail and not args.page:
+        # Never let the Primary scope silently hide newer inbox mail.
+        newest = received(rows[0]) if rows else float("-inf")
+        shown = {row["id"] for row in rows}
+        try:
+            inbox = "in:inbox" + (" (" + criteria + ")" if criteria else "")
+            others = message_rows(run_gog(["gmail", "messages", "search", inbox, "--max", "5"], "gmail.messages.search"))
+            newer = [row for row in sorted(others, key=received, reverse=True)
+                     if row["id"] not in shown and received(row) > newest][:3]
+            output["newer_outside_scope"] = sanitize_mail(newer)
+        except GoogleError:
+            output["newer_outside_scope_unknown"] = True
+    return output
+
+
+def list_events(start, end):
+    if datetime.fromisoformat(end) <= datetime.fromisoformat(start):
+        raise GoogleError("Calendar end must be after start.")
+    zone = os.environ.get("TARI_TIMEZONE", "America/Toronto")
+    ZoneInfo(zone)
+    sources, rows = calendars(), []
+    for source in sources:
+        cid = identifier(source["id"])
+        events = collection(["calendar", "events", cid, "--from", start, "--to", end,
+                             "--max", "250", "--timezone", zone], "calendar.events", "events")
+        for item in events:
+            if not valid_event(item):
+                raise GoogleError("An event is missing required fields; completeness is unknown.")
+            rows.append({**{k: item[k] for k in EVENT_FIELDS if k in item},
+                         "calendar_id": cid, "calendar_access_role": source.get("accessRole"),
+                         "calendar_primary": source.get("primary", False)})
+    return {"events": rows, "calendars": sources, "time_zone": zone,
+            "complete": True, "nextPageToken": None, "untrusted_content": True}
+
+
+def manage_calendar(arguments):
+    """Use gog's native Calendar command/flag surface; keep credentials isolated."""
+    if not arguments or arguments[0].startswith("-"):
+        raise GoogleError("Pass a native Calendar command, for example create, update, delete, or respond.")
+    # Native event/recurrence/attendee flags pass through. Auth and output flags
+    # belong to this wrapper so they cannot reroute the account or expose tokens.
+    reserved = {"--account", "--acct", "-a", "--client", "--home", "--access-token",
+                "--quota-project", "--enable-commands", "--enable-commands-exact", "--disable-commands",
+                "--readonly", "--gmail-no-send", "--json", "-j", "--machine", "--plain", "-p",
+                "--tsv", "--results-only", "--select", "--pick", "--project", "--verbose", "-v",
+                "--no-input", "--non-interactive", "--noninteractive"}
+    if any(arg.split("=", 1)[0] in reserved or arg.startswith(("-a", "-j", "-p", "-v")) for arg in arguments):
+        raise GoogleError("Calendar account, credentials and output settings are managed by the wrapper.")
+    # Offset-bearing timestamps are already absolute instants. Add IANA metadata,
+    # never add/subtract the Toronto offset a second time.
+    if arguments[0] in ("create", "update") and any(a.split("=", 1)[0] in ("--from", "--to") for a in arguments):
+        if not any(a.split("=", 1)[0] in ("--timezone", "--start-timezone", "--end-timezone", "--all-day") for a in arguments):
+            arguments = [*arguments, "--timezone", os.environ.get("TARI_TIMEZONE", "America/Toronto")]
+    try:
+        data = run_gog(["calendar", *arguments], "calendar", calendar_management=True)
+    except GoogleError:
+        raise GoogleError("Calendar request was not verified. If a change was attempted, its outcome may be unknown; inspect the event before retrying.") from None
+    # This is the native API receipt, not a claim of independent read-back.
+    return {"data": data, "untrusted_content": True}
+
+
+def parser():
+    cli = argparse.ArgumentParser(description=__doc__)
+    groups = cli.add_subparsers(dest="service", required=True)
+    mail = groups.add_parser("gmail").add_subparsers(dest="action", required=True)
+    search = mail.add_parser("search")
+    search.add_argument("query", nargs="?", default="")
+    search.add_argument("--all-mail", action="store_true", help="explicitly search beyond Primary Inbox")
+    search.add_argument("--max", type=int, default=20)
+    search.add_argument("--page", type=identifier)
+    read = mail.add_parser("read")
+    read.add_argument("message_id", type=identifier)
+    calendar = groups.add_parser("calendar").add_subparsers(dest="action", required=True)
+    calendar.add_parser("calendars")
+    listing = calendar.add_parser("list")
+    listing.add_argument("--start", type=timestamp, required=True)
+    listing.add_argument("--end", type=timestamp, required=True)
+    listing.add_argument("--json", action="store_true", help="JSON is always emitted")
+    get = calendar.add_parser("get")
+    get.add_argument("calendar_id", type=identifier)
+    get.add_argument("event_id", type=identifier)
+    get.add_argument("--allow-absent", action="store_true", help="Treat verified 404/410 as absence")
+    manage = calendar.add_parser("manage", help="Native gog Calendar commands and event-management flags")
+    manage.add_argument("arguments", nargs=argparse.REMAINDER)
+    return cli
+
+
+def main(argv=None):
+    args = parser().parse_args(argv)
+    try:
+        account()
+        if args.service == "gmail":
+            if args.action == "search":
+                output = {**search_mail(args), "untrusted_content": True, "read_only": True}
+            else:
+                result = run_gog(["gmail", "get", args.message_id, "--sanitize-content"], "gmail.get")
+                row = result.get("message", result) if isinstance(result, dict) else None
+                if not isinstance(row, dict) or not row.get("id"):
+                    raise GoogleError("Google returned no verifiable message.")
+                output = {"data": sanitize_mail(result), "untrusted_content": True, "read_only": True}
+        elif args.action == "calendars":
+            output = {"calendars": calendars(), "complete": True, "untrusted_content": True}
+        elif args.action == "list":
+            output = list_events(args.start, args.end)
+        elif args.action == "get":
+            output = {"event": event(args.calendar_id, args.event_id, allow_absent=args.allow_absent), "untrusted_content": True}
+        elif args.action == "manage":
+            output = manage_calendar(args.arguments)
+        print(json.dumps(output, ensure_ascii=False))
+        return 0
+    except (GoogleError, ValueError, OSError, argparse.ArgumentTypeError) as exc:
+        print(json.dumps({"error": str(exc), "verified": False, "complete": False}), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

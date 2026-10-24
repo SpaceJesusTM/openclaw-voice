@@ -1,0 +1,8 @@
+# Agents this ClawVoice installation serves.
+# Tari (personal assistant), Astra (coding assistant) and Jester (entertainment,
+# voice-only: no OpenClaw backend).
+# Fixture agents load only with CLAWVOICE_ENABLE_FIXTURES=1 (offline tests).
+# Override at runtime with CLAWVOICE_AGENTS=a,b and CLAWVOICE_DEFAULT_AGENT=a.
+default_agent: tari
+agents: [tari, astra, jester]
+fixture_agents: [fixture]

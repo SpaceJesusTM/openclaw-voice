@@ -1,0 +1,37 @@
+[project]
+name = "clawvoice-voice"
+version = "0.1.0"
+description = "ClawVoice runtime: Higgs Realtime 1.5 Preview + Pipecat voice for configurable OpenClaw agents"
+requires-python = ">=3.11,<3.14"
+# Same validated stack as experiments/pipecat-higgs-1.5. pipecat-boson 0.1.4
+# requires pipecat-ai < 1.13; do not upgrade one without the other.
+dependencies = [
+  "pipecat-ai[runner,webrtc]==1.12.0",
+  "pipecat-boson==0.1.4",
+  "python-dotenv==1.2.2",
+  "aiohttp==3.13.3",
+  # Already in the locked graph through pipecat/aiortc; used directly here.
+  "pyyaml==6.0.3",
+  "websockets==17.3",
+  "cryptography==50.0.2",
+]
+
+[dependency-groups]
+dev = ["pytest==8.4.2", "pytest-asyncio==1.2.0", "ruff==0.15.7"]
+
+[tool.uv]
+package = false
+constraint-dependencies = ["nltk!=3.10.1"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+  "ignore::DeprecationWarning:pipecat.*",
+  "ignore:'audioop' is deprecated:DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110

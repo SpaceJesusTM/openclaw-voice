@@ -1,0 +1,26 @@
+# Secrets: never commit live Boson credentials
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local development and test artifacts
+node_modules/
+dist/
+build/
+coverage/
+captures/
+.local/
+.local-astra/
+astra-workspace/
+infra/openclaw/workspace/planner/
+infra/openclaw/.local-astra/
+.DS_Store
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/

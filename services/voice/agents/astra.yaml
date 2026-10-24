@@ -1,0 +1,89 @@
+# Astra: practical coding assistant backed by an isolated OpenClaw runtime
+# in infra/openclaw (compose.astra.yaml) and dedicated workspace in astra-workspace/.
+id: astra
+display_name: Astra
+emoji: "🔵"
+color: "#3b82f6"
+role_file: astra.md
+owner_scope: local-owner
+timezone: America/Toronto
+voice:
+  boson_voice: oliver              # distinct from Tari's voice in a Team room
+# Team mode: an utterance is for Astra when it starts with one of these words
+# (after "hey", "okay"...) or ends with one as a vocative ("..., Astra?").
+addressing:
+  aliases: [astra, astro, austra, astrah, ashra, aster, esther]
+
+openclaw:
+  agent_id: astra                    # OpenClaw agent; HTTP selector openclaw/astra
+  gateway:
+    ws_url: ws://127.0.0.1:18949     # loopback-only Astra Gateway
+    http_url: http://127.0.0.1:18949
+    # Server-side reference to Astra's Gateway token; never exposed to the browser.
+    token_ref: envfile:infra/openclaw/.local-astra/runtime.env#OPENCLAW_GATEWAY_TOKEN
+    transport: auto                  # WebSocket once paired, otherwise HTTP fallback
+    device_file: astra-gateway-device.json
+    pairing_hint: "python3 infra/openclaw/manage.py --agent astra openclaw devices approve {request_id}"
+  session:
+    key_template: "agent:{agent_id}:clawvoice-{owner_scope}"
+  timeouts:
+    question_seconds: 180
+    change_seconds: 300
+
+plugins: [coding_workspace]
+
+# Trusted, deterministic workspace helper (no model run). Reads real project files,
+# metadata, validation status, and live preview status from astra-workspace/.
+helpers:
+  project: ["{python}", "{repo}/infra/openclaw/manage.py", "--agent", "astra", "project"]
+
+hot_context:
+  defaults:
+    ttl_seconds: 60               # fresh window; refreshed while a voice session is active
+    max_staleness_seconds: 600    # usable with an age disclosure
+    idle_refresh_seconds: 600     # refresh cadence when nobody is connected
+    read_wait_seconds: 3          # how long a voice read waits for a needed refresh
+  topics:
+    - key: projects.active
+      description: "the active coding project, current work/task state, and local preview status"
+      coverage: "active project metadata, on-disk HTML title/heading, running ClawVoice jobs, and live preview server status on port 18950 (not full file contents)"
+      resolver: projects_active
+      args: {helper: project}
+    - key: projects.recent
+      description: "recently worked-on coding projects and their latest updates"
+      coverage: "the 5 most recently modified coding projects in astra-workspace only"
+      resolver: projects_recent
+      args: {helper: project, limit: 5}
+      ttl_seconds: 120
+    - key: project.latest_update
+      description: "the latest completed coding action, changed files, validation/build status, and preview status"
+      coverage: "the most recent completed coding update and validation check on the active project only"
+      resolver: project_latest_update
+      args: {helper: project}
+    - key: jobs.recent
+      description: "background coding tasks in progress and recent results"
+      coverage: "the 5 most recent ClawVoice background coding tasks only"
+      resolver: recent_jobs
+      args: {limit: 5}
+      ttl_seconds: 30
+      max_staleness_seconds: 120
+      idle_refresh_seconds: 300
+      read_wait_seconds: 1
+
+delegation:
+  targets: [website, project, code, tests, preview, other]
+  clarify: >-
+    which project or file to change only when genuinely ambiguous; for requests to
+    create a website or edit the active website's title, heading, styling, or content,
+    delegate immediately to OpenClaw without unnecessary clarification questions
+  receipt_types:
+    coding_change:
+      verifier: coding_change
+      args: {helper: project}
+      invalidates: [projects.active, projects.recent, project.latest_update]
+      format: '{"type":"coding_change","action":"created|updated","project":"<project slug>","files":"<comma-separated relative file paths>","check_id":"<check id from astra-project check>","title":"<HTML title if website>","heading":"<H1 heading if website>","preview_url":"http://127.0.0.1:18950"}'
+    test_run:
+      verifier: coding_change
+      args: {helper: project}
+      invalidates: [projects.active, projects.recent, project.latest_update]
+      format: '{"type":"test_run","action":"completed","project":"<project slug>","check_id":"<check id from astra-project check>"}'

@@ -1,0 +1,96 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "/home/node/.openclaw/workspace",
+      "model": {
+        "primary": "openai/gpt-6.1-sol",
+        "fallbacks": []
+      },
+      "models": {
+        "openai/gpt-6.1-sol": { "agentRuntime": { "id": "openclaw" } }
+      },
+      "userTimezone": "America/Toronto",
+      "sandbox": {
+        "mode": "off"
+      }
+    },
+    "entries": {
+      "tari": {
+        "name": "Tari",
+        "workspace": "/home/node/.openclaw/workspace",
+        "identity": {
+          "name": "Tari"
+        },
+        "heartbeat": {
+          "every": "0m"
+        }
+      }
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "port": 18789,
+    "auth": {
+      "mode": "token",
+      "token": {
+        "source": "env",
+        "provider": "default",
+        "id": "OPENCLAW_GATEWAY_TOKEN"
+      },
+      "rateLimit": {
+        "maxAttempts": 10,
+        "windowMs": 60000,
+        "lockoutMs": 300000
+      }
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    },
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:18939",
+        "http://127.0.0.1:18939"
+      ]
+    },
+    "tailscale": {
+      "mode": "off"
+    }
+  },
+  "tools": {
+    "profile": "full",
+    "deny": ["cron", "gateway", "sessions_spawn", "sessions_send"],
+    "fs": {
+      "workspaceOnly": true
+    }
+  },
+  "cron": { "enabled": false },
+  "browser": { "enabled": false },
+  "logging": { "level": "warn", "consoleLevel": "warn" },
+  "skills": {
+    "workshop": {
+      "autonomous": {
+        "mode": "off"
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "memory-core": {
+        "enabled": true,
+        "config": {
+          "dreaming": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  },
+  "telemetry": {
+    "enabled": false
+  }
+}

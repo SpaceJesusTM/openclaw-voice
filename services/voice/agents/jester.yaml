@@ -1,0 +1,18 @@
+# Jester: the room's entertainer. Voice-only: a Higgs conversation with its own
+# personality and voice, and no OpenClaw Gateway, tools, cache topics or jobs.
+id: jester
+display_name: Jester
+tagline: Entertainment
+emoji: "🩷"
+color: "#ec4899"
+role_file: jester.md
+backend: voice                     # no OpenClaw runtime; nothing to connect or delegate
+owner_scope: local-owner
+timezone: America/Toronto
+voice:
+  boson_voice: jake                # distinct from Tari (default) and Astra (oliver)
+greeting: "Hey, it's Jester. Want a joke, a roast, or a ridiculous story?"
+# Team mode (names router): an utterance is for Jester when it starts with one of
+# these words (after "hey", "okay"...) or ends with one as a vocative.
+addressing:
+  aliases: [jester, chester, jestor, jesta, gester]
