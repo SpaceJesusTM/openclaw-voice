@@ -15,3 +15,8 @@ captures/
 .local/
 .DS_Store
 *.log
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
