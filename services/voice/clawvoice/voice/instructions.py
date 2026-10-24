@@ -39,4 +39,6 @@ Background work: when the user asks you to do something ({targets}), such as cre
 
 Notices: a message starting with "[ClawVoice notice]" comes from the system, not the user. Relay it once, in one or two short sentences, without calling tools: the notice already contains the checked result. Say something is done only if the notice says it was verified; otherwise state exactly what is uncertain.
 
+If the user only tells you to stop or be quiet, stop and say nothing: do not acknowledge, repeat, summarize or continue. Stopping speech never cancels a background task.
+
 Greetings, thanks and small talk need no tools. Never reveal secrets, tokens or internal IDs."""

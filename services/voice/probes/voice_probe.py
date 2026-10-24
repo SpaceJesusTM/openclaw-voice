@@ -22,6 +22,8 @@ truncation events and independent helper read-backs, not on model wording.
   g  an ambiguous request gets a clarifying question, not a job; then a
      Calendar create, a verified time change of the same event, and delete
   h  checklist add verified and visible in the cached checklist; removal
+  j  explicit stop: long answer and completion notice stop without resuming;
+     the job keeps running, its notice is dismissed, new questions work
   i  cache vs live: today from the cache (no job); January 2027, an explicit
      live check and a broad question go to OpenClaw or a clarifying question,
      verified in OpenClaw's own transcript; disposable January event removed
@@ -815,9 +817,82 @@ async def scenario_i(url: str, timeout: float, out: dict) -> dict:
     return out
 
 
+async def say_stop(probe: Probe, words: str, label: str, quiet: float = 7.0) -> dict:
+    """Speak a stop request over Tari and check speech ends and does not resume."""
+    mark = probe.mark()
+    probe.mic.play(wav(f"stop-{label}", words))
+
+    def heard() -> int | None:
+        for index, event in enumerate(probe.events[mark:], mark):
+            data = event.get("data") or {}
+            if event.get("type") == "user-transcription" and data.get("final") and re.search(r"stop|enough", norm(data.get("text", ""))):
+                return index
+        return None
+
+    await probe.wait(lambda: heard() is not None, f"stop transcript ({label})", 30)
+    at = heard()
+    await asyncio.sleep(quiet)
+    before = probe.bot_text(mark)[: max(0, len(probe.bot_text(mark)) - len(probe.bot_text(at)))]
+    after = probe.bot_text(at)
+    restarted = [e for e in probe.events[at:] if e.get("type") == "bot-started-speaking"]
+    return {"transcript": (probe.events[at].get("data") or {}).get("text"), "spoken_after_stop": after,
+            "restarted_speaking": len(restarted), "stop_event": bool(probe.server(mark, "clawvoice.stop")),
+            "text_between_stop_and_transcript": before[-120:]}
+
+
+async def scenario_j(url: str, timeout: float, out: dict) -> dict:
+    """Explicit "stop": speech ends without restarting, the reply to "stop" is discarded,
+    an interrupted completion notice is dismissed (result kept), jobs keep running."""
+    probe = Probe(url, timeout)
+    try:
+        await probe.connect()
+        await greet(probe, url)
+        ask = await probe.say("Please ask the agent in the background, as a question: run the shell command "
+                              "'sleep 30' and then reply exactly 'stop test complete'.")
+        await probe.wait(lambda: probe.tools(ask, "delegate_task"), "delegate_task", 60)
+        job_id = probe.tools(ask, "delegate_task")[0]["job_id"]
+        await probe.wait_turn(ask, "acknowledgement")
+        # 1. Stop a long answer.
+        talk = await probe.say("Count slowly from one to forty, one number per sentence.")
+        await probe.wait(lambda: probe.since(talk, "bot-started-speaking"), "counting starts", 30)
+        await asyncio.sleep(2.5)
+        out["long_answer"] = await say_stop(probe, "Stop talking.", "long")
+        require(not out["long_answer"]["spoken_after_stop"], "Tari spoke again after 'stop'")
+        require(not out["long_answer"]["restarted_speaking"], "speech restarted after 'stop'")
+        running = job_state(await api(url, "/api/state?agent=tari"), job_id)
+        out["job_after_stop"] = running.get("status")
+        require(running.get("status") in ("queued", "running"), "stopping speech affected the background job")
+        # 2. A new question is answered normally.
+        q = await probe.say("What is two plus two?")
+        out["normal_reply"] = await probe.wait_turn(q, "normal answer")
+        require("four" in norm(out["normal_reply"]) or "4" in out["normal_reply"], "normal question not answered")
+        # 3. Stop the completion announcement: dismissed, result kept, job unaffected.
+        await probe.wait(lambda: probe.jobs(0, job_id, "job.finished"), "job finishes", 120)
+        notice = probe.mark()
+        await probe.wait(lambda: probe.since(notice, "bot-started-speaking"), "announcement starts", 60)
+        await asyncio.sleep(1.0)
+        out["announcement"] = await say_stop(probe, "That's enough.", "notice")
+        require(not out["announcement"]["spoken_after_stop"], "Tari spoke again after stopping the notice")
+        finished = job_state(await api(url, "/api/state?agent=tari"), job_id)
+        out["job_final"] = {k: finished.get(k) for k in ("status", "announcement", "outcome_text")}
+        require(finished.get("status") == "completed", "the job did not complete")
+        require(finished.get("announcement") == "dismissed", f"announcement state {finished.get('announcement')}")
+        require("stop test complete" in norm(finished.get("outcome_text", "")), "job result was not kept")
+        # 4. An unrelated question is answered; the notice is not replayed.
+        q = await probe.say("What day of the week is it today?")
+        out["after_notice_reply"] = await probe.wait_turn(q, "unrelated answer")
+        require("stop test complete" not in norm(out["after_notice_reply"]), "dismissed notice was replayed")
+        await asyncio.sleep(5)
+        require("stop test complete" not in norm(probe.bot_text(q)), "dismissed notice was replayed later")
+    finally:
+        await probe.close()
+        out["session"] = probe.report()
+    return out
+
+
 SCENARIOS = {
     "a": scenario_a, "b": scenario_b, "c": scenario_c, "d": scenario_d, "e": scenario_e,
-    "f": scenario_f, "g": scenario_g, "h": scenario_h, "i": scenario_i,
+    "f": scenario_f, "g": scenario_g, "h": scenario_h, "i": scenario_i, "j": scenario_j,
 }
 
 
@@ -851,7 +926,7 @@ if __name__ == "__main__":
     parser.add_argument("--live", action="store_true", help="Explicitly allow live Boson/OpenClaw/Google calls")
     parser.add_argument("--url", default="http://127.0.0.1:7860")
     parser.add_argument("--fixture-url", default="http://127.0.0.1:7861", help="Server running the fixture agent (f)")
-    parser.add_argument("--scenario", default="all", help="a-i, comma separated, or all (= a-e, g, h, i; f needs the fixture servers)")
+    parser.add_argument("--scenario", default="all", help="a-j, comma separated, or all (= a-e, g, h, i; j and f run on request)")
     parser.add_argument("--timeout", type=float, default=90)
     args = parser.parse_args()
     if not args.live:

@@ -94,6 +94,16 @@ async def bot(runner_args: RunnerArguments):
     async def latency(service, entry):
         session.ui("latency", {"origin": entry.get("origin"), "first_audio_ms": entry.get("first_audio_ms")})
 
+    @llm.event_handler("on_stop_request")
+    async def stop_request(service, text):
+        # Speech only: background jobs keep running; cancel_task stays separate.
+        session.coordinator.on_stop_request()
+        session.ui("stop", {"phase": "requested"})
+
+    @llm.event_handler("on_user_turn")
+    async def user_turn(service, text):
+        session.coordinator.on_user_words(text)
+
     @rtvi.event_handler("on_client_ready")
     async def client_ready(processor):
         session.client_ready = True

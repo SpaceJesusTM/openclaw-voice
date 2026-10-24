@@ -41,6 +41,8 @@ from pipecat.frames.frames import (
 )
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 
+from clawvoice.voice.stop import is_stop_request
+
 try:  # Present in pipecat 1.12; guarded so the observer degrades gracefully.
     from pipecat.frames.frames import ProposedUserStartedSpeakingFrame, ProposedUserStoppedSpeakingFrame
 except ImportError:  # pragma: no cover
@@ -49,6 +51,8 @@ except ImportError:  # pragma: no cover
 NOTICE_PREFIX = "[ClawVoice notice]"
 QUIET_SECONDS = 0.9
 UNHEARD_TIMEOUT_SECONDS = 8.0
+# A "stop" this soon after a notice was interrupted dismisses that notice.
+STOP_WINDOW_SECONDS = 15.0
 MAX_COALESCE = 3
 # A connected browser always streams input audio (microphone or a silent track).
 # WebRTC peers that vanish are detected late, so recent input audio is the
@@ -109,6 +113,9 @@ class AnnouncementCoordinator:
         self._task: asyncio.Task | None = None
         self.user_words: deque[str] = deque(maxlen=3)
         self.last_client_audio: float | None = None
+        # After an explicit "stop": no notices until the user says something new.
+        self.silenced = False
+        self._last_interrupted: tuple[float, list[dict[str, Any]]] = (0.0, [])
 
     def client_alive(self) -> bool:
         return self.last_client_audio is not None and time.monotonic() - self.last_client_audio < CLIENT_SILENCE_SECONDS
@@ -184,6 +191,7 @@ class AnnouncementCoordinator:
     def on_interruption(self) -> None:
         self.activity()
         if self._delivering:
+            self._last_interrupted = (time.monotonic(), list(self._delivering))
             if self._heard:
                 self._finish_delivery("delivered")  # partially heard: at most once
             else:
@@ -204,6 +212,28 @@ class AnnouncementCoordinator:
         if text and not text.startswith(NOTICE_PREFIX):
             self.user_words.append(text[:400])
             self.activity()
+            if not is_stop_request(text):
+                self.silenced = False  # something new was said
+
+    def on_stop_request(self) -> None:
+        """Explicit "stop": dismiss the notice being (or just) spoken; hold new ones.
+
+        The job and its result are untouched; only the spoken announcement is
+        marked dismissed so it is not replayed. Jobs keep running.
+        """
+        self.silenced = True
+        self.activity()
+        interrupted_at, recent = self._last_interrupted
+        items = list(self._delivering) + (recent if time.monotonic() - interrupted_at < STOP_WINDOW_SECONDS else [])
+        for item in items:
+            if item in self._pending:
+                self._pending.remove(item)
+            self._delivered_ids.add(item["job_id"])
+            self._mark(item["job_id"], "dismissed")
+        self._delivering = []
+        self._last_interrupted = (0.0, [])
+        self._heard = False
+        self._publish()
 
     # ------------------------------------------------------------ delivery
     def _finish_delivery(self, state: str) -> None:
@@ -264,6 +294,7 @@ class AnnouncementCoordinator:
                 if (
                     self._pending
                     and self.ready
+                    and not self.silenced
                     and self.client_alive()
                     and self.floor.free()
                     and now - self.floor.last_activity >= self.quiet_seconds

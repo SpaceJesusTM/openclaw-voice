@@ -21,6 +21,7 @@ import time
 from pipecat_boson.realtime import BosonRealtimeLLMService
 
 from clawvoice.config import MODEL, TRANSCRIPTION_MODEL, Settings
+from clawvoice.voice.stop import is_stop_request
 from clawvoice.voice.telemetry import Trace, sanitize
 
 
@@ -44,6 +45,10 @@ class VerifiedBosonService(BosonRealtimeLLMService):
         self.trace = trace
         self._register_event_handler("on_preview_event", sync=True)
         self._register_event_handler("on_latency", sync=True)
+        self._register_event_handler("on_stop_request", sync=True)
+        self._register_event_handler("on_user_turn", sync=True)
+        # After an explicit "stop", automatic server replies are cancelled until the user's next turn.
+        self._silenced = False
         self._first_audio: set[str] = set()
         # Turn start (speech end / typed text / notice) -> first audio of the next response.
         self._turn_mark: tuple[str, float] | None = None
@@ -68,9 +73,27 @@ class VerifiedBosonService(BosonRealtimeLLMService):
                 text = str(((item.get("content") or [{}])[0] or {}).get("text") or "")
                 origin = "notice" if text.startswith("[ClawVoice notice]") else "user_text"
                 self._turn_mark = (origin, time.monotonic())
+                if origin == "user_text":  # a typed message is a new turn
+                    self._silenced = False
+                    await self._call_event_handler("on_user_turn", text)
         await super().send_client_event(event)
         if kind in ("conversation.item.truncate", "response.cancel"):
             await self._call_event_handler("on_preview_event", entry)
+
+    async def handle_evt_input_audio_transcription_completed(self, evt):
+        text = str(getattr(evt, "transcript", "") or "")
+        if is_stop_request(text):
+            # Explicit "stop": end speech now, discard the reply to this turn, and stay
+            # silent until the next turn. Background jobs are not touched.
+            self._silenced = True
+            self.trace.record("stop.requested")
+            await self._call_event_handler("on_stop_request", text)
+            # The server may already have started its automatic reply to this turn: cancel it
+            # (response.cancel + truncate, the SDK's own interruption handling), then flush
+            # any of its audio already queued downstream.
+            await self._handle_interruption()
+            await self.broadcast_interruption()
+        await super().handle_evt_input_audio_transcription_completed(evt)
 
     async def _handle_evt_response_done(self, event):
         # Boson can deliver cancelled response.done BEFORE speech_started.
@@ -101,6 +124,9 @@ class VerifiedBosonService(BosonRealtimeLLMService):
             self.trace.record("model.verified", acknowledged=model)
         if kind == "input_audio_buffer.speech_stopped":
             self._turn_mark = ("speech_end", time.monotonic())
+        if kind == "input_audio_buffer.speech_started" and self._silenced:
+            self._silenced = False  # the user is taking a new turn
+            self.trace.record("stop.released", reason="user speech")
         if kind == "response.created" and self._tool_mark is not None and self._answer_response is None:
             self._answer_response = (event.get("response") or {}).get("id")
         important = kind in (
@@ -133,7 +159,17 @@ class VerifiedBosonService(BosonRealtimeLLMService):
         if important:
             await self._call_event_handler("on_preview_event", sanitize(entry, self.trace.secrets))
         result = await super()._dispatch_boson_server_event(event)
+        if kind == "response.created" and self._silenced and not _client_created(event):
+            # The server's automatic reply to the "stop" turn: cancel it before it speaks.
+            self.trace.record("stop.cancelled_reply", response_id=(event.get("response") or {}).get("id"))
+            await self._cancel_active_response()
         if result is False:
             self.trace.failure = "Boson terminated event processing; see diagnostic/API error"
             await self.push_error(self.trace.failure, force_treat_as_permanent=True)
         return result
+
+
+def _client_created(event: dict) -> bool:
+    """Responses ClawVoice requested (typed text, notices) carry a client event id."""
+    metadata = (event.get("response") or {}).get("metadata") or {}
+    return bool(metadata.get("client_event_id"))
