@@ -1,4 +1,4 @@
-# ClawVoice voice runtime (Priority 1)
+# Chorus voice runtime (Priority 1)
 
 Team mode (several agents in one room, addressed by name) is described in
 [team-voice.md](team-voice.md).
@@ -14,7 +14,7 @@ Three behaviors define Priority 1:
    reads) without waiting for an OpenClaw model run.
 2. **Real agent actions.** "Create a Calendar event tomorrow from 3 to 4 PM called
    Project Meeting" is handed to the OpenClaw agent, which uses its own Calendar
-   skill. ClawVoice then reads the event back independently and only says it is
+   skill. Chorus then reads the event back independently and only says it is
    done when the read-back matches.
 3. **Nonblocking conversation.** You keep talking while the agent works. The
    result is announced when nobody is speaking. Interrupting speech never
@@ -62,23 +62,23 @@ Python server; it never receives the Boson key or the Gateway token.
 
 ### Optional: pair the WebSocket transport
 
-ClawVoice reaches the Gateway in one of two supported ways, chosen per agent by
+Chorus reaches the Gateway in one of two supported ways, chosen per agent by
 `openclaw.gateway.transport` (`auto` by default):
 
 - **HTTP** (works immediately): streaming `/v1/chat/completions` with the
   server-side bearer token, agent selector `openclaw/<agentId>` and an explicit
   session key. If the HTTP connection drops mid-run, the Gateway cancels the
-  run, so ClawVoice marks such a change as *uncertain* and never resubmits it.
+  run, so Chorus marks such a change as *uncertain* and never resubmits it.
 - **WebSocket** (preferred once approved): protocol v4 via Pipecat's
   `OpenClawGatewayClient`, with run IDs, Gateway-side idempotency keys, real
   `chat.abort`, and recovery with `agent.wait` after a dropped socket or a
-  ClawVoice restart.
+  Chorus restart.
 
 The Gateway only grants WebSocket operator scopes to an approved device, and the
-Docker-published port means ClawVoice is never a loopback client. On startup
-ClawVoice creates a private device key (`services/voice/.local/gateway-device.json`,
+Docker-published port means Chorus is never a loopback client. On startup
+Chorus creates a private device key (`services/voice/.local/gateway-device.json`,
 mode 0600) and requests pairing with `operator.read` + `operator.write` only.
-To approve it (an owner decision; the token ClawVoice already holds is a full
+To approve it (an owner decision; the token Chorus already holds is a full
 operator credential, so this grants no broader access):
 
 ```sh
@@ -88,7 +88,7 @@ curl -X POST http://127.0.0.1:7860/api/agents/tari/gateway/reconnect   # or rest
 ```
 
 The UI's Gateway badge shows `WebSocket (paired)` afterwards. Pairing requests
-expire after five minutes; ClawVoice re-requests on start, on reconnect and
+expire after five minutes; Chorus re-requests on start, on reconnect and
 every ten minutes while it runs on HTTP. Revoke with `openclaw devices remove`.
 
 ## Primary Inbox, unified schedule and microphone controls
@@ -104,7 +104,7 @@ Calendar and timed planner entries now refer to the same Calendar event. New
 planner bookings create no local mirror. Existing local blocks and checklist
 remain local; no automatic migration runs. See [planner.md](planner.md).
 
-ClawVoice now explicitly sends VAD threshold **0.90** and silence **600 ms**.
+Chorus now explicitly sends VAD threshold **0.90** and silence **600 ms**.
 The pinned Boson SDK/server default was 0.85 ([SDK changelog](https://github.com/boson-ai/pipecat-boson/blob/main/CHANGELOG.md)).
 Tune `BOSON_VAD_THRESHOLD` in `services/voice/.env` (e.g. 0.85 for quieter speech,
 0.95 for louder/noisier input), then reconnect; Boson fixes VAD at session start.
@@ -134,7 +134,7 @@ make dev
 
 The page shows the agent (name, role, colored orb), the verified model badge,
 the Gateway transport, the conversation (speech transcripts, typed messages,
-replies and ClawVoice notices), background tasks with live status,
+replies and Chorus notices), background tasks with live status,
 verification and timings (with a Cancel button), the fast-context topics with
 age and freshness, and a diagnostics drawer (tool calls with cache status and
 read time, Boson events, latencies). Orb states: idle, listening, speaking,
@@ -239,7 +239,7 @@ and job store file.
 ### Add another OpenClaw agent
 
 1. Provision the agent in its own OpenClaw installation (or as another agent on
-   a Gateway you own) with its own credentials. ClawVoice never shares one
+   a Gateway you own) with its own credentials. Chorus never shares one
    agent's OAuth or mailbox with another.
 2. Copy `agents/astra.yaml` (the fixture example) to `agents/<id>.yaml`: set
    identity, `openclaw.agent_id`, the Gateway URLs and `token_ref`, `helpers`,
@@ -406,7 +406,7 @@ with a speaking-agent field and a cross-agent floor queue.
   to helpers must be plain identifiers.
 - Calendar titles, planner text and agent output are treated as data; the voice
   instructions say so, and tool results are bounded and whitespace-normalized.
-- Gmail stays read-only and is never cached or spoken by ClawVoice.
+- Gmail stays read-only and is never cached or spoken by Chorus.
 - Private traces, probe reports, job records and the device key live only in
   ignored `services/voice/captures/` and `services/voice/.local/`.
 
@@ -445,7 +445,7 @@ item with the demo's own helper and reports whether it is gone. Scenario `f`
 
 | Symptom | Check |
 | --- | --- |
-| "ClawVoice server is not reachable" | `make dev` running; port 7860 free |
+| "Chorus server is not reachable" | `make dev` running; port 7860 free |
 | Gateway badge "unavailable" | `python3 infra/openclaw/manage.py status` / `doctor` |
 | Badge "HTTP (pairing pending)" | Normal; optional pairing above |
 | Microphone denied | Browser site settings for 127.0.0.1, or typed-only mode |
@@ -461,7 +461,7 @@ and [voice-gmail-latest.md](voice-gmail-latest.md).
 
 - **Pending owner action:** physical microphone and speaker validation (all live
   tests used synthetic speech), and WebSocket device approval (Tari uses HTTP;
-  a ClawVoice restart during an HTTP run marks a change *uncertain*).
+  a Chorus restart during an HTTP run marks a change *uncertain*).
 - Not exercised live: recurring and all-day events, multi-day events, checklist
   status changes and completion (covered offline). The planner refuses
   recurring/all-day/multi-day edits and hands them to the Calendar skill.

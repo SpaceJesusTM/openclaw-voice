@@ -1,11 +1,11 @@
-# ClawVoice — Claude project entry point
+# Chorus — Claude project entry point
 
 > **Priority 1 is complete (baseline `release/p1-stable`, tag `v0.1.0`). Priority 2a (Astra + Team mode) is implemented on `feat/p2a-team-voice`, pending owner acceptance.** These documents preserve the full product vision and architecture intent. They are not evidence that future features exist. Treat the latest checked-out code, tests, and explicit owner request as authoritative for implementation status.
 
 ## Read these in order
 
 1. Existing repository `AGENTS.md`, `README.md`, `docs/architecture.md`, and current code/tests. Keep existing security and Git instructions.
-2. [Product vision and complete end state](docs/PRODUCT_VISION.md): why ClawVoice exists, what the *finished product* must enable, agent-team and multi-person goals.
+2. [Product vision and complete end state](docs/PRODUCT_VISION.md): why Chorus exists, what the *finished product* must enable, agent-team and multi-person goals.
 3. [Technical architecture and contracts](docs/ARCHITECTURE_AND_CONTRACTS.md): reusable agent adapter, realtime speech, generic hot context, nonblocking work, orchestration, isolation, integration boundaries.
 4. [Roadmap, acceptance tests, and demo](docs/ROADMAP_ACCEPTANCE_DEMO.md): what is mandatory *now* vs future phases and how each phase is proved.
 5. [Original hackathon vision (historical)](references/ORIGINAL_HACKATHON_VISION.md): the user's original, unchanged concept brief. Its early implementation-status descriptions are historical, not a current status report.
@@ -14,7 +14,7 @@ These docs are **durable product and architecture intent**, not permission to im
 
 ## Product identity
 
-**ClawVoice — “Your AI team, in the room.”** A reusable, real-time voice harness for **arbitrary OpenClaw agents**, powered by **Boson Higgs Realtime 1.5 Preview** and **Pipecat**. The voice model is the conversational foreground, OpenClaw is the persistent tool/memory/action backend, and ClawVoice coordinates cache, async execution, identity, and who speaks. Example agents: **Tari 🟢** personal/planning, **Astra 🔵** coding/work, **Jester 🩷** entertainment. Names, roles, colors, voices and capabilities are **examples and configurable**, not hard-coded platform assumptions.
+**Chorus — “One conversation. A whole team of AI agents.”** (working name Chorus; code identifiers keep `clawvoice`). A reusable, real-time voice harness for **arbitrary OpenClaw agents**, powered by **Boson Higgs Realtime 1.5 Preview** and **Pipecat**. The voice model is the conversational foreground, OpenClaw is the persistent tool/memory/action backend, and Chorus coordinates cache, async execution, identity, and who speaks. Example agents: **Tari 🟢** personal/planning, **Astra 🔵** coding/work, **Jester 🩷** entertainment. Names, roles, colors, voices and capabilities are **examples and configurable**, not hard-coded platform assumptions.
 
 ## Phase boundary in one sentence
 

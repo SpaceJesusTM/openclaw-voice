@@ -1,9 +1,9 @@
-# ClawVoice architecture and milestones
+# Chorus architecture and milestones
 
-ClawVoice connects independent persistent OpenClaw agents to one coherent
+Chorus connects independent persistent OpenClaw agents to one coherent
 spoken environment. Higgs Realtime 1.5 Preview supplies native speech;
 Pipecat supplies realtime transport, the realtime service, tools and the
-OpenClaw Gateway protocol client; ClawVoice supplies agent identity, fast
+OpenClaw Gateway protocol client; Chorus supplies agent identity, fast
 context, verified nonblocking work and the speaking floor.
 
 Design intent: [ARCHITECTURE_AND_CONTRACTS.md](ARCHITECTURE_AND_CONTRACTS.md).
@@ -17,7 +17,7 @@ Stable baseline: branch `release/p1-stable`, tag `v0.1.0`.
 | `experiments/higgs-realtime-1.5/` | Direct API regression playground | Step 1 validated, preserved |
 | `experiments/pipecat-higgs-1.5/` | Pipecat speech-to-speech validation | Step 2 validated, preserved |
 | `infra/openclaw/` | Independent OpenClaw Gateway + Gmail (read-only, Primary tab) / Calendar / unified planner | Validated foundation (Tari) |
-| `services/voice/` | ClawVoice runtime: Pipecat/Higgs voice, generic OpenClaw adapter, hot-context cache with live fallback, background jobs, stop-speaking, local API | **Priority 1 complete** |
+| `services/voice/` | Chorus runtime: Pipecat/Higgs voice, generic OpenClaw adapter, hot-context cache with live fallback, background jobs, stop-speaking, local API | **Priority 1 complete** |
 | `apps/web/` | Local browser UI (single agent, orb, tasks, context, diagnostics, push-to-talk) | **Priority 1 complete** |
 | `services/context-cache/`, `services/orchestrator/` | Reserved names; P1 implements these as modules inside `services/voice` | Pointers only |
 | `packages/agent-contracts/` | Shared contracts | P1 contracts live in `services/voice/clawvoice` (see README) |
@@ -40,7 +40,7 @@ Browser --WebRTC/RTVI--> Pipecat transport -> Higgs 1.5 Preview (tools)
 ## Boundaries kept
 
 - The Gateway token and Boson key stay server-side; the UI receives neither.
-- Google/Calendar logic stays in the OpenClaw agent's skills; ClawVoice only
+- Google/Calendar logic stays in the OpenClaw agent's skills; Chorus only
   invokes the agent and reads results back through the agent's own helpers.
 - Speech interruption, "stop talking" and job cancellation are separate controls.
 - The cache is an accelerator, not a boundary: each topic declares its coverage,

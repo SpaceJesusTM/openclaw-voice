@@ -45,7 +45,7 @@ async def test_api_exposes_identity_and_state_without_secrets(two_agent_runtime)
             assert forbidden not in body
         assert (await http.get("/api/state", params={"agent": "nobody"})).status_code == 404
         index = await http.get("/")
-        assert index.status_code == 200 and "ClawVoice" in index.text
+        assert index.status_code == 200 and "<title>Chorus</title>" in index.text
 
 
 async def test_cross_origin_posts_are_refused(two_agent_runtime):

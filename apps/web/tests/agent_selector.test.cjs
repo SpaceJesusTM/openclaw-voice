@@ -31,7 +31,7 @@ function setupEnv({ team = false, jester = false } = {}) {
   });
   const window = element();
   const document = Object.assign(element(), {
-    title: 'ClawVoice',
+    title: 'Chorus',
     documentElement: {
       style: {
         setProperty(k, v) { styles.set(k, v); },

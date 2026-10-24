@@ -1,4 +1,4 @@
-/* ClawVoice. Warm, quiet surfaces; the voice is the focus.
+/* Chorus. Warm, quiet surfaces; the voice is the focus.
    Clay is reserved for the agent (its voice, its work). Your voice is ink. */
 :root {
   --canvas: #faf9f5;
@@ -60,7 +60,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
   padding: 14px 28px; border-bottom: 1px solid var(--line);
 }
+.brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
 .wordmark { font: 400 19px/1 var(--serif); letter-spacing: .1px; }
+.tagline { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-selector { display: flex; gap: 24px; }
 .agent-selector[hidden] { display: none; }
 .agent-tab {
@@ -419,6 +421,7 @@ body[data-mode="team"] .turn.user .who-label {
 
 /* ---------------------------------------------------------------- narrower screens */
 @media (max-width: 1180px) {
+  .tagline { display: none; }
   /* Still one window: stage, then the preview when open, then conversation beside the lists.
      Each band takes a share of the height instead of growing the page. */
   .layout { flex-direction: column; padding: 16px 20px 18px; }

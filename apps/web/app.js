@@ -1,4 +1,4 @@
-// ClawVoice local UI.
+// Chorus local UI (the ClawVoice runtime keeps its internal names).
 // Native WebRTC to Pipecat's SmallWebRTC transport (/start + /sessions/:id/api/offer)
 // and RTVI messages on the data channel. No secrets ever reach this page: the
 // Boson key and OpenClaw Gateway token stay in the Python server.
@@ -233,7 +233,7 @@ async function init() {
     renderSeats();
     await refreshState(true);
   } catch (error) {
-    banner("ClawVoice server is not reachable. Start it with `make dev` in services/voice.");
+    banner("Chorus server is not reachable. Start it with `make dev` in services/voice.");
   }
   ui.poll = setInterval(refreshState, 2500);
   setOrb();
@@ -253,14 +253,14 @@ function renderIdentity() {
   $("team-queue").hidden = !team;
   if (team) {
     const names = [...ui.teamAgents.values()].map((x) => x.display_name);
-    document.title = "ClawVoice · Team";
+    document.title = "Chorus · Team";
     $("agent-name").textContent = "Team";
     $("agent-role").textContent = `${names.join(" and ")} in one room. Start with a name: “Hey ${names[0]}…”, “Okay ${names[1] || names[0]}…”.`;
     document.documentElement.style.setProperty("--accent", a.color);
     document.documentElement.style.setProperty("--accent-soft", hexToSoft(a.color, 0.22));
     return;
   }
-  document.title = `ClawVoice · ${a.display_name}`;
+  document.title = `Chorus · ${a.display_name}`;
   $("agent-name").textContent = a.display_name;
   $("agent-role").textContent = a.role || "";
   document.documentElement.style.setProperty("--accent", a.color);
@@ -482,7 +482,7 @@ function addTurn(kind, text, { interim = false, speaker = null } = {}) {
   const el = document.createElement("div");
   el.className = `turn ${kind}${interim ? " interim" : ""}`;
   if (speaker?.color) el.style.setProperty("--who-color", speaker.color);
-  const who = kind === "user" ? "You" : kind === "bot" ? speaker?.display_name || ui.agent?.display_name || "Agent" : "ClawVoice";
+  const who = kind === "user" ? "You" : kind === "bot" ? speaker?.display_name || ui.agent?.display_name || "Agent" : "Chorus";
   const whoHtml = kind === "user" ? `<span class="who-label">${esc(who)}</span>` : esc(who);
   el.innerHTML = `<span class="who">${whoHtml}</span><span class="text"></span>`;
   el.querySelector(".text").textContent = text;

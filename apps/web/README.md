@@ -1,6 +1,6 @@
-# ClawVoice web UI
+# Chorus web UI
 
-A dependency-free local page served by the ClawVoice server at
+A dependency-free local page served by the Chorus server at
 http://127.0.0.1:7860 (`cd services/voice && make dev`). It uses native WebRTC
 to Pipecat's SmallWebRTC transport and RTVI messages; it never receives the
 Boson key or the OpenClaw Gateway token.

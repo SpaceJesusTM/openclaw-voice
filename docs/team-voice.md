@@ -10,7 +10,7 @@ browser connection. You address either by name, both can work on separate reques
 at the same time, and their replies take turns on one speaking floor. The Tari-only
 and Astra-only modes are unchanged.
 
-Run it: [GETTING_STARTED.md](GETTING_STARTED.md#team-mode-tari-and-astra-together).
+Run it: [GETTING_STARTED.md](GETTING_STARTED.md#team-mode-tari-astra-and-jester-together).
 
 ## How it works
 

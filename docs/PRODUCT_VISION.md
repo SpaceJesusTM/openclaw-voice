@@ -1,4 +1,4 @@
-# ClawVoice — Complete product vision
+# Chorus — Complete product vision
 
 **Tagline:** **Your AI team, in the room.**  
 **Hackathon context:** Boson AI × Higgs Realtime, October 23–24, 2026  
@@ -9,7 +9,7 @@
 
 Users should converse naturally with their persistent OpenClaw agents as if those agents were members of an available, coordinated team. Agents have independent memory, responsibilities, personalities, tools, identities and voices. They can take real actions, make progress during an ongoing conversation, update the user without forcing them to poll, and collaborate with each other when invited. The experience should feel like **one shared conversational environment**, not separate chatbots, isolated push-to-talk commands, or a chain of blocking API calls.
 
-ClawVoice is a **reusable harness**: connect an arbitrary compatible OpenClaw agent, configure its name/voice/role/capabilities and cached context, and gain the same conversational infrastructure. Tari/Astra/Jester are demonstration personas, not built-in requirements of the platform.
+Chorus is a **reusable harness**: connect an arbitrary compatible OpenClaw agent, configure its name/voice/role/capabilities and cached context, and gain the same conversational infrastructure. Tari/Astra/Jester are demonstration personas, not built-in requirements of the platform.
 
 ## What makes it different
 
@@ -24,7 +24,7 @@ ClawVoice is a **reusable harness**: connect an arbitrary compatible OpenClaw ag
 
 ### A. Single personal assistant (Priority 1)
 
-**Fast planner:** "Tari, what's in my day planner today?" → Higgs asks the ClawVoice context tool → receives Tari's **fresh actual** planner/checklist/calendar snapshot → speaks promptly. The answer is not generated from a stale invented summary or the experimental mock fixture. Topics, TTLs and resolvers are configurable for every agent.
+**Fast planner:** "Tari, what's in my day planner today?" → Higgs asks the Chorus context tool → receives Tari's **fresh actual** planner/checklist/calendar snapshot → speaks promptly. The answer is not generated from a stale invented summary or the experimental mock fixture. Topics, TTLs and resolvers are configurable for every agent.
 
 **External action:** "Tari, create a Calendar event called Study Group on Monday at 3 PM." → Higgs delegates a structured job to Tari via OpenClaw → Tari uses its Calendar skill → verifies real event details → result is spoken. The assistant never announces success solely because a job was accepted.
 
@@ -58,7 +58,7 @@ Users can share a voice room while retaining independent OpenClaw deployments, i
 
 ## Visual and interaction design goal
 
-A polished, recognizably ClawVoice interface, eventually showing animated agent orbs and agent states:
+A polished, recognizably Chorus interface, eventually showing animated agent orbs and agent states:
 
 | Agent (example) | Color | Core feel |
 | --- | --- | --- |

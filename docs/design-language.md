@@ -1,12 +1,12 @@
-# ClawVoice design language
+# Chorus design language
 
-How the ClawVoice web UI (`apps/web/`) looks and why. Read this before adding or
+How the Chorus web UI (`apps/web/`) looks and why. Read this before adding or
 changing anything on screen. The tokens live at the top of `apps/web/style.css`;
 this document explains the decisions behind them.
 
 ## The idea in one paragraph
 
-ClawVoice is a voice conversation with an agent that also does real work. The screen
+Chorus is a voice conversation with an agent that also does real work. The screen
 exists to make three things obvious at a glance: **who is talking right now**, **what
 the agent is actually doing**, and **what it has built**. Everything else is quiet.
 The look is warm, calm and editorial: off-white or charcoal surfaces, hairline

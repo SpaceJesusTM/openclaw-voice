@@ -1,4 +1,4 @@
-# ClawVoice repository instructions for coding agents
+# Chorus repository instructions for coding agents
 
 Goal: reusable real-time voice conversations with independently operating
 OpenClaw agents. Distinct characters, per-agent context, nonblocking work,

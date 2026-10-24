@@ -1,4 +1,4 @@
-# Getting started: run and test ClawVoice
+# Getting started: run and test Chorus
 
 Baseline: branch `release/p1-stable`, tag `v0.1.0`: one voiced agent (Tari) on
 Boson Higgs Realtime 1.5 Preview + Pipecat, backed by a real OpenClaw agent.
@@ -113,7 +113,7 @@ cd services/voice && .venv/bin/python probes/team_probe.py --live --speech --sto
 ## Optional: WebSocket transport
 
 Tari works over the Gateway's HTTP API. To use the WebSocket transport (run IDs,
-real abort, recovery after a restart), approve the device ClawVoice requests,
+real abort, recovery after a restart), approve the device Chorus requests,
 an owner decision:
 
 ```sh

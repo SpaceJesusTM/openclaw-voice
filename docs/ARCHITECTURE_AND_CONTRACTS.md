@@ -1,4 +1,4 @@
-# ClawVoice — Architecture and reusable contracts
+# Chorus — Architecture and reusable contracts
 
 > **Status:** Priority 1 is implemented (baseline `v0.1.0`; see [architecture.md](architecture.md) and [voice.md](voice.md) for the actual code). Priority 2a and later remain design intent.
 >
@@ -112,7 +112,7 @@ error reason (sanitized), optional provenance
 
 **Freshness:** warm proactively; refresh on controlled schedules; invalidate after *verified* planner, checklist and Calendar changes; use singleflight to avoid duplicate source reads; handle TTL, DST-aware date rollover, failed/incomplete sources, backoff and explicit live bypass for freshness-critical requests. A cache that failed refreshing may yield a **clearly marked** last-known result, never silently invent fresh availability. Refresh through actual agent tools/resolvers or verified OpenClaw-side helpers; avoid costly full LLM agent calls for each heartbeat when structured read-only retrieval exists. OpenClaw proactive heartbeats are an optional mechanism, not a requirement to enable autonomous jobs on the demo agent.
 
-**Consistency:** after verified planner/Calendar mutation, relevant snapshots must invalidate or update before subsequently answering as current. Avoid asserting a failed or merely accepted write in cached results. Treat external changes made outside ClawVoice as eventually detected by bounded refresh. Never leak Gmail security/auth messages or raw private emails into generic voice/cache state.
+**Consistency:** after verified planner/Calendar mutation, relevant snapshots must invalidate or update before subsequently answering as current. Avoid asserting a failed or merely accepted write in cached results. Treat external changes made outside Chorus as eventually detected by bounded refresh. Never leak Gmail security/auth messages or raw private emails into generic voice/cache state.
 
 **Separate recent-results index:** job_id, agent_id, request_id, created_at, completed_at, terminal status, verified/simulated flags, safe summary and limited retention. Don't confuse prior generated speech with a verified tool action.
 
@@ -140,11 +140,11 @@ Each submission has a caller/session scope, correlation ID, idempotency key when
 Voice layer never implements privileged business logic already in OpenClaw. The end-to-end path is:
 
 1. The user speaks a clear request.
-2. Higgs invokes an appropriate structured ClawVoice tool.
+2. Higgs invokes an appropriate structured Chorus tool.
 3. Job runner sends it to the correctly configured OpenClaw agent/session.
 4. OpenClaw uses its existing authoritative tools/skills (e.g. Calendar management).
 5. On success, backend reads back the event and verifies actual title, time, timezone, target and state.
-6. ClawVoice surfaces a verified result; Higgs speaks it at an appropriate turn.
+6. Chorus surfaces a verified result; Higgs speaks it at an appropriate turn.
 
 For ambiguous time, recurrence, attendee, recipient, calendar ownership, or destructive operations, solicit user clarity/authorization and do not guess. Existing Calendar system allows direct explicitly specified event creation, but an inferred event from Gmail or a document is **not** an authorization. Planner blocks never silently create Google Calendar events. Imported content and cached facts do not authorize actions.
 

@@ -1,8 +1,21 @@
-# ClawVoice — OpenClaw Voice Team
+# Chorus
 
-A hackathon project exploring natural conversations with a team of independent
-OpenClaw agents. Voice is powered by **Boson Higgs Realtime 1.5 Preview**
-(`higgs-realtime-1.5-preview`), with **Pipecat** as the chosen voice framework.
+**One conversation. A whole team of AI agents.**
+
+Chorus is a hackathon project for natural voice conversations with a team of
+independent OpenClaw agents: **Tari** (personal assistant), **Astra** (coding, with a
+live website preview) and **Jester** (entertainment). Talk to one agent, or to all
+three in Team mode, where a silent Higgs overseer routes each turn to the right agent,
+one agent speaks at a time, and real background work keeps running while you talk.
+Voice is powered by **Boson Higgs Realtime 1.5 Preview** (`higgs-realtime-1.5-preview`),
+with **Pipecat** as the voice framework.
+
+**Status:** the final hackathon build is on `main`. Start with
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+
+> Chorus was developed under the working name Chorus. Internal identifiers keep
+> that name for compatibility: the Python package `clawvoice`, API events
+> `clawvoice.*`, `CLAWVOICE_*` environment variables, paths and configuration.
 
 ## Status: Priority 1 baseline (`release/p1-stable`, tag `v0.1.0`)
 
@@ -76,6 +89,6 @@ and [comparison](experiments/pipecat-higgs-1.5/COMPARISON.md) remain as referenc
 
 Pipecat handles audio transport, the realtime service, tools and the OpenClaw
 Gateway protocol client; OpenClaw provides agent workspaces, memory, skills and
-operations. ClawVoice provides the integration experience: configurable agent
+operations. Chorus provides the integration experience: configurable agent
 identities, fast authorized context retrieval, nonblocking verified agent work,
 the speaking floor, and (next, Priority 2a) multi-agent voice and routing.

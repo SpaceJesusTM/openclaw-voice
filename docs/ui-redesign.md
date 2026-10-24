@@ -1,4 +1,4 @@
-# ClawVoice UI redesign plan
+# Chorus UI redesign plan
 
 Branch: `astra-coding-agent-frontend` (local). Status: built (sections 1–5); not yet
 checked in a live voice session.

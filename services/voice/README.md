@@ -1,4 +1,4 @@
-# ClawVoice voice runtime
+# Chorus voice runtime
 
 Pipecat + Boson Higgs Realtime 1.5 Preview voice for configurable OpenClaw
 agents, with a per-agent hot-context cache and nonblocking, verified OpenClaw

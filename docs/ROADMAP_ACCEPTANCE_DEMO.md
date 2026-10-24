@@ -1,4 +1,4 @@
-# ClawVoice — Phased roadmap, evidence, and demo storyboard
+# Chorus — Phased roadmap, evidence, and demo storyboard
 
 This is the **whole-project roadmap**, not a command to implement every phase during a single Claude Code run. Later explicit assignments govern what to build now. Preserve the final product intent even when deliberately limiting the implementation scope.
 
