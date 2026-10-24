@@ -102,7 +102,32 @@ stepping in, not like a glitch or a voice change mid-thought. In tests, 2 of 3
 swaps opened that way, and both used the example phrase word for word. For
 more variety, give each persona its own example opener.
 
-**9. Debug from logs, not by asking.** Every decision is logged to
+**9. Swap gracefully: the old agent wraps up while the new one generates.**
+A hard cut on a swap chopped the old agent mid-word. Now, when the overseer
+calls `call_agent`:
+
+1. The old agent plays on to the end of its current clause (if that's within
+   1.5 s), else 0.9 s more. Its memory is truncated at that point in advance,
+   so what it "said" matches what you'll hear.
+2. It's asked for one short handoff line ("Actually, Coder's better with this
+   one") right away, so the line generates while its last words play.
+3. The new agent's reply is requested at the same moment and held.
+4. A playback **lineup** plays them back to back: last words, then the handoff
+   line, then the new agent. Each follows on the same tick the previous one
+   ends.
+
+Measured: the new agent was heard ~0.1 s after the handoff line ended. Total
+time from when you stop to the new agent rose to 5.3–6.0 s (from 3.2–4.2 s),
+because you now hear the wrap-up instead of a cut. But the line is never silent and
+nothing is chopped. If the old agent hadn't been heard yet, there's nothing
+to wrap up and the new agent plays directly.
+
+Two Higgs 1.5 sessions generating at once (handoff line + new reply) made the
+new agent's first try fail with `upstream_error` on both test swaps. The
+one-retry rule recovered it in time, just as the handoff line ended. Without
+that retry, this design would leave silence after the handoff.
+
+**10. Debug from logs, not by asking.** Every decision is logged to
 `captures/web-*.log`: turns, drafts, switches, cuts, reply outcomes, latency.
 Every bug here was found by reading a log: the stale listener, the missing
 `response.done`, `upstream_error`, the replayed transcripts.

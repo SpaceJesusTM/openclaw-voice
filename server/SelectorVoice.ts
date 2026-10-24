@@ -40,6 +40,8 @@ export interface Reply {
   askedAt: number;
   /** Samples the room has played of it. */
   sent: number;
+  /** Set when stopped at a point still ahead of playback: the agent's memory is truncated there, not at `sent`. */
+  keepSamples: number | null;
   /** Resolves when the reply is done. */
   readonly ended: Promise<void>;
 }
@@ -112,6 +114,7 @@ export class SelectorVoice {
       retried: false,
       askedAt: 0,
       sent: 0,
+      keepSamples: null,
       ended: new Promise<void>((res) => (finish = res)),
     };
     this.finishers.set(r, finish);
@@ -128,13 +131,15 @@ export class SelectorVoice {
   }
 
   /**
-   * Stop a reply at `sent` samples played. Queued: it's skipped. Requested or
-   * live: its response is cancelled. Either way the agent's memory is
-   * truncated to what was actually played.
+   * Stop a reply at `sent` samples played, or at `keepSamples` when the room
+   * will play on to that point (a graceful handoff). Queued: it's skipped.
+   * Requested or live: its response is cancelled. Either way the agent's
+   * memory is truncated to what will have been heard.
    */
-  stop(r: Reply): void {
+  stop(r: Reply, keepSamples?: number): void {
     if (r.cancelled) return;
     r.cancelled = true;
+    if (keepSamples !== undefined) r.keepSamples = keepSamples;
     if (r.state === "queued") return this.end(r, "skipped");
     if (r.state === "done") return this.truncate(r);
     // Requested, or live with no audio yet: cancelled when its first audio arrives (see onEvent).
@@ -213,7 +218,7 @@ export class SelectorVoice {
 
   /** Forget what was never heard, so the agent doesn't think it said it. */
   private truncate(r: Reply): void {
-    if (r.itemId) this.session.send(truncateItem(r.itemId, msOf(r.sent)));
+    if (r.itemId) this.session.send(truncateItem(r.itemId, msOf(r.keepSamples ?? r.sent)));
   }
 
   private queue(fn: () => Promise<void>): Promise<void> {

@@ -51,9 +51,11 @@ Double-click **`selector.bat`**, or open http://localhost:3000/selector.html.
 - Agents draft early: at a 200 ms pause the active agent starts a held reply,
   played once your turn is over and dropped unheard if you keep talking.
   Measured 2026-10-24: same-agent replies are heard **0.9–1.45 s** after you stop
-  (each line in the page shows its time). Swaps take 3.2–4.2 s, because the
-  overseer decides 0.5–1.9 s after you stop, and the old agent is heard briefly
-  before it's cut. A swapped-in agent opens with something like "I can help with that".
+  (each line in the page shows its time).
+- Swaps are graceful: the old agent finishes its clause and says a short
+  handoff line ("Actually, Coder's better with this one") while the new agent's
+  reply generates. The new agent then plays right after (~0.1 s), opening with
+  something like "I can help with that". About 5–6 s from when you stop.
 - A failed agent reply is retried once, about 2 s later.
 - How the silent overseer works, and everything learned building it: [docs/silent-overseer.md](docs/silent-overseer.md).
 - `npx tsx tools/probe/selectorClient.ts [port]` talks to it with synthesized speech and prints what happens.

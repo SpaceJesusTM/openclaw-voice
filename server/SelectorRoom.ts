@@ -27,6 +27,13 @@ const MIC_KEEP_SAMPLES = samplesOf(120_000);
 /** Chunks sent ahead of real time when a reply starts, to absorb network jitter. */
 const LEAD_CHUNKS = 2;
 /**
+ * On a swap the old agent wraps up: it plays on to the end of its current
+ * clause if that's this close, else this long, then says a handoff line.
+ * Roughly the time its handoff line takes to generate.
+ */
+const WRAP_UP_MAX_CLAUSE_MS = 1500;
+const WRAP_UP_DEFAULT_MS = 900;
+/**
  * Quiet this long inside your turn starts a held draft reply. Higgs takes
  * 0.55-0.8 s to first audio, so waiting for the VAD's 700 ms before asking put
  * every reply ~1.5 s after you stopped.
@@ -60,8 +67,18 @@ export class SelectorRoom {
   private overseer: RealtimeSession | null = null;
   private voices = new Map<AgentName, SelectorVoice>();
   private active: AgentName = "planner";
-  /** The reply being played (or about to be): always the active agent's latest. */
+  /** The reply being played (or about to be). */
   private current: Reply | null = null;
+  /**
+   * Replies that play back to back after `current`, with no gap if their audio
+   * is ready: on a swap, the old agent's handoff line, then the new agent.
+   * They generate while the one before them plays.
+   */
+  private lineup: Reply[] = [];
+  /** Where a wrapping-up reply stops playing (samples). */
+  private stopAt = new WeakMap<Reply, number>();
+  /** Whether the last tick sent audio, so a reply that follows on gets no extra lead. */
+  private sentLastTick = false;
   private queued: Int16Array = new Int16Array(0);
   private mic: { at: number; pcm: Int16Array }[] = [];
   /** Samples of mic audio sent to the overseer: its VAD's timeline. */
@@ -291,26 +308,70 @@ export class SelectorRoom {
     }
   }
 
+  /**
+   * Hand the conversation to another agent, gracefully. If the old agent is
+   * being heard, it plays on to a near clause end, then says a short handoff
+   * line; the new agent's reply generates meanwhile and plays right after.
+   * If the old agent hasn't been heard yet, its reply is dropped unheard.
+   */
   private switchTo(agent: AgentName, reason: string, by: "overseer" | "you"): void {
     if (agent === this.active) {
       this.send({ type: "overseer", kind: "stay", agent, reason, by });
       return;
     }
     const from = this.active;
+    const old = this.voices.get(from);
+    const next = this.voices.get(agent);
+    if (!old || !next) return;
     this.log(`switch ${from} -> ${agent} (${by}: ${reason})`);
     this.dropDraft(`${agent} takes over`);
-    this.cut(`${agent} takes over`);
+    for (const q of this.lineup.splice(0)) this.voices.get(q.agent)?.stop(q); // an earlier handoff, superseded
     this.active = agent;
     this.send({ type: "active", name: agent, from, reason, by });
     if (by === "you") this.overseer?.send(textItem(`(Note: the user switched to ${agent}. ${agent} is talking with the user now.)`));
-    this.reply(
-      agent,
+
+    const r = this.current;
+    if (r && r.agent === from && r.sent > 0) {
+      const end = this.wrapUpPoint(r);
+      this.stopAt.set(r, end);
+      old.stop(r, end); // its memory ends where you'll stop hearing it
+      this.queued = concat(r.audio).subarray(r.sent, end);
+      const name = agent[0].toUpperCase() + agent.slice(1);
+      this.lineup.push(
+        old.respond(
+          `(Note: what the user wants is ${name}'s area, and ${name} is taking over. Wrap up now in one short sentence, ` +
+            `like "Actually, ${name}'s better with this one", then stop. Don't start answering.)`,
+        ),
+      );
+      this.log(`${from} wraps up: plays ${msOf(end - r.sent)} ms more, then a handoff line, then ${agent}`);
+    } else if (r) {
+      this.cut(`${agent} takes over`);
+    }
+    const reply = next.respond(
       // A short opener says who's taking over, so a swap sounds like someone stepping in, not a glitch.
-      `(Note: you have the floor now${by === "you" ? ", the user picked you" : ""}; ${from} has gone quiet. ` +
+      `(Note: you have the floor now${by === "you" ? ", the user picked you" : ""}; ${from} is handing over to you. ` +
         `You're stepping in, so open with a few words like "I can help with that" or "Ooh, that's my area", in your own style, ` +
         `then reply to the last thing the user said, as ${agent}. Don't mention any overseer.)`,
-      by === "overseer" ? { stoppedAt: this.lastSpeechAt, drafted: false } : undefined,
     );
+    if (by === "overseer") this.timing.set(reply, { stoppedAt: this.lastSpeechAt, drafted: false });
+    if (this.current) this.lineup.push(reply);
+    else this.play(reply);
+  }
+
+  /** Where the old agent stops on a swap: its current clause's end if that's near, else a little further on. */
+  private wrapUpPoint(r: Reply): number {
+    const playedMs = msOf(r.sent);
+    const total = r.audio.reduce((n, c) => n + c.length, 0);
+    const clauseEnd = r.fragments.find((f) => f.endMs > playedMs)?.endMs;
+    const endMs = clauseEnd !== undefined && clauseEnd - playedMs <= WRAP_UP_MAX_CLAUSE_MS ? clauseEnd : playedMs + WRAP_UP_DEFAULT_MS;
+    const end = samplesOf(endMs);
+    return r.state === "done" ? Math.min(end, total) : end;
+  }
+
+  /** Make `r` the reply being played, with whatever audio it already has. */
+  private play(r: Reply): void {
+    this.current = r;
+    this.queued = concat(r.audio);
   }
 
   /** `answers`: when you stopped talking, if this reply answers you (for the latency log). */
@@ -318,9 +379,8 @@ export class SelectorRoom {
     const v = this.voices.get(agent);
     if (!v) return;
     if (this.current) this.cut("new reply");
-    this.queued = new Int16Array(0);
-    this.current = v.respond(note);
-    if (answers) this.timing.set(this.current, answers);
+    this.play(v.respond(note));
+    if (answers && this.current) this.timing.set(this.current, answers);
   }
 
   /** Only the current reply's audio is played. */
@@ -332,8 +392,9 @@ export class SelectorRoom {
     if (r.outcome !== "completed") this.log(`${r.agent} reply ${r.outcome} (${msOf(r.sent)} ms played)`);
   }
 
-  /** Stop the active agent now. What you already heard is kept, and relayed to the others. */
+  /** Stop whoever is talking now, and drop what was lined up. What you already heard is kept, and relayed to the others. */
   private cut(why: string): void {
+    for (const q of this.lineup.splice(0)) this.voices.get(q.agent)?.stop(q);
     const r = this.current;
     if (!r) return;
     this.current = null;
@@ -344,31 +405,46 @@ export class SelectorRoom {
     this.finish(r, true);
   }
 
-  /** 100 ms of the current reply per tick, a little ahead at the start. */
+  /**
+   * 100 ms of the current reply per tick, a little ahead when starting from
+   * silence. When it ends (played out, or at its wrap-up point), the next one
+   * in the lineup starts on the same tick: no gap if its audio is ready.
+   */
   private tick(): void {
     if (Math.round((Date.now() - this.startedAt) / 100) % 20 === 0) this.send({ type: "usage", ...this.usageReport() });
-    const r = this.current;
-    if (!r) return;
-    const chunks = r.sent === 0 ? LEAD_CHUNKS : 1;
-    for (let i = 0; i < chunks && this.queued.length > 0; i++) {
-      if (r.sent === 0) {
-        const t = this.timing.get(r);
-        if (t) t.latencyMs = Date.now() - t.stoppedAt;
-        this.log(
-          `${r.agent} audible ${Date.now() - r.askedAt} ms after response.create` +
-            (t ? `, ${t.latencyMs} ms after you stopped talking (${t.drafted ? "draft" : "fresh"})` : ""),
-        );
-        this.send({ type: "speaking", name: r.agent });
+    let sent = false;
+    while (this.current) {
+      const r = this.current;
+      const limit = this.stopAt.get(r) ?? Infinity;
+      // One chunk per tick; a lead when starting from silence; none if this tick already sent.
+      let budget = sent ? 0 : r.sent === 0 && !this.sentLastTick ? LEAD_CHUNKS : 1;
+      for (; budget > 0 && this.queued.length > 0 && r.sent < limit; budget--) {
+        if (r.sent === 0) {
+          const t = this.timing.get(r);
+          if (t) t.latencyMs = Date.now() - t.stoppedAt;
+          this.log(
+            `${r.agent} audible ${Date.now() - r.askedAt} ms after response.create` +
+              (t ? `, ${t.latencyMs} ms after you stopped talking (${t.drafted ? "draft" : "fresh"})` : ""),
+          );
+          this.send({ type: "speaking", name: r.agent });
+        }
+        const chunk = this.queued.subarray(0, Math.min(CHUNK_SAMPLES, limit - r.sent));
+        this.queued = this.queued.subarray(chunk.length);
+        r.sent += chunk.length;
+        if (this.ws.readyState === WebSocket.OPEN) this.ws.send(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength), { binary: true });
+        sent = true;
       }
-      const chunk = this.queued.subarray(0, CHUNK_SAMPLES);
-      this.queued = this.queued.subarray(chunk.length);
-      r.sent += chunk.length;
-      if (this.ws.readyState === WebSocket.OPEN) this.ws.send(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength), { binary: true });
-    }
-    if (r.state === "done" && this.queued.length === 0) {
+      const over = r.sent >= limit || (this.queued.length === 0 && (r.state === "done" || r.cancelled));
+      if (!over) break;
       this.current = null;
-      this.finish(r, false);
+      const total = r.audio.reduce((n, c) => n + c.length, 0);
+      this.finish(r, r.sent < total);
+      const next = this.lineup.shift();
+      if (!next) break;
+      // The next reply starts now if nothing was sent this tick, else on the next tick: no gap either way.
+      this.play(next);
     }
+    this.sentLastTick = sent;
   }
 
   /** A reply ended, played out or cut: show it, let the other agents hear it, and tell the overseer. */
