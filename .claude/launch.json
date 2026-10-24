@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "web"],
+      "port": 3000
+    },
+    {
+      "name": "higgs-playground",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:/Users/ttuki/Desktop/openclaw-voice-smoke-next/experiments/higgs-realtime-1.5", "run", "dev"],
+      "env": { "PORT": "3001" },
+      "port": 3001
+    }
+  ]
+}

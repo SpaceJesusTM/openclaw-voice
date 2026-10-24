@@ -1,0 +1,23 @@
+{
+  "name": "openclaw-voice",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-agent voice rooms on Boson Higgs Realtime",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "probe": "tsx tools/probe/index.ts",
+    "demo": "tsx demo/run.ts",
+    "web": "tsx server/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
