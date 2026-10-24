@@ -3,137 +3,62 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Voice Room</title>
+    <title>Agent Selector</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <header class="bar">
-      <h1>Voice Room</h1>
+      <h1>Agent Selector</h1>
       <div class="bar-right">
-        <span id="cost" class="pill" title="Estimated from the token usage Higgs reports, at Boson's published rates. Your billing dashboard is the source of truth." hidden></span>
+        <span id="cost" class="pill" title="Estimated from the token usage Higgs reports, at Boson's published rates." hidden></span>
         <span id="status" class="pill">Not connected</span>
       </div>
     </header>
 
     <main>
-      <!-- Setup -->
-      <section id="setup" class="setup">
-        <div class="panel">
-          <div class="setup-head">
-            <div>
-              <h2>Set the scene</h2>
-              <p class="hint">
-                Every agent hears the room's real audio and has a private mind that decides when to speak, cut in, or
-                back off. You join as one more person: talk, or type. Headphones help, so they don't hear themselves.
-              </p>
-            </div>
-            <label class="inline preset">
-              Start from
-              <select id="preset"></select>
-            </label>
-          </div>
-          <label class="you">
-            <span>Your name <span class="optional">(so they can address you)</span></span>
-            <input id="you" maxlength="24" placeholder="e.g. Jefferson" autocomplete="given-name" />
-          </label>
-          <label>
-            <span>The situation <span class="optional">(every agent knows this)</span></span>
-            <textarea id="scene" rows="2" maxlength="600" placeholder="e.g. Two weeks before launch, deciding whether to ship the new checkout flow."></textarea>
-          </label>
-        </div>
-
-        <div class="agents-head">
-          <h2>Agents</h2>
-          <button id="add-agent" type="button">+ Add agent</button>
-        </div>
-        <div id="agent-cards" class="cards"></div>
-
-        <div class="panel row">
-          <label class="inline">
-            Agent turns in a row before they wait for you
-            <input id="max-turns" type="number" min="1" max="20" value="4" />
-          </label>
-          <button id="start" class="primary">Start the room</button>
-        </div>
-        <p id="setup-error" class="error" hidden></p>
+      <section id="intro" class="panel intro">
+        <h2>Talk to planner, coder and jester</h2>
+        <p class="hint">
+          You're always talking to one of them. A silent overseer listens to every turn and hands the conversation to
+          whoever fits: ask for code and coder takes over, ask for a joke and jester does. Planner starts. Use
+          headphones, so the agents don't hear themselves through your mic.
+        </p>
+        <button id="start" class="primary">Start talking</button>
+        <p id="start-error" class="error" hidden></p>
       </section>
 
-      <!-- Live room -->
-      <section id="room" class="room" hidden>
-        <div class="stage">
-          <div id="tiles" class="tiles"></div>
-          <div class="panel controls-panel">
-            <div class="controls">
-              <button id="mic" class="toggle on" aria-pressed="true">Mic on</button>
-              <div class="meter" title="Your mic level"><div id="meter-fill"></div></div>
-              <button id="leave" class="ghost">Leave</button>
+      <section id="room" hidden>
+        <div id="tiles" class="sel-tiles"></div>
+
+        <div class="panel overseer" id="overseer">
+          <div class="tile-head">
+            <div class="avatar">O</div>
+            <div>
+              <div class="who">overseer <span class="chip" id="hearing">listening</span></div>
+              <div class="what" id="overseer-model">never speaks · one tool: call_agent</div>
             </div>
-            <div class="controls sound-row">
-              <span class="meter-label">Room audio</span>
-              <div class="meter" title="Audio arriving from the room"><div id="speaker-fill" class="speaker"></div></div>
-              <button id="test-sound" class="ghost small-btn" type="button">Test sound</button>
-            </div>
-            <p id="sound-note" class="hint sound-note" hidden></p>
-            <form id="say-form" class="say">
-              <input id="say-text" type="text" placeholder="Type something to say it out loud…" autocomplete="off" />
-              <button type="submit">Say</button>
-            </form>
-            <p id="mic-note" class="hint" hidden></p>
           </div>
+          <ol id="decisions" class="decisions" aria-live="polite"></ol>
         </div>
 
-        <div class="panel transcript-panel">
-          <div class="transcript-head">
-            <h2>Transcript</h2>
-            <div class="transcript-actions">
-              <label class="inline small"><input id="show-thoughts" type="checkbox" checked /> Private thoughts</label>
-              <button id="download" class="ghost small-btn" type="button">Download</button>
-            </div>
+        <div class="panel talk">
+          <div class="row">
+            <label class="inline"><input type="checkbox" id="mic" checked /> Mic on</label>
+            <div class="meter" title="your mic"><div id="meter-fill"></div></div>
+            <span class="hint" id="mic-note" hidden></span>
           </div>
+          <form id="say" class="say">
+            <input id="say-text" placeholder="Or type a line…" autocomplete="off" />
+            <button>Send</button>
+          </form>
+        </div>
+
+        <div class="panel">
+          <h2>Conversation</h2>
           <ol id="transcript" class="transcript"></ol>
         </div>
       </section>
     </main>
-
-    <template id="agent-card">
-      <fieldset class="card">
-        <div class="card-head">
-          <span class="dot"></span>
-          <input class="name-input" name="name" maxlength="24" placeholder="Name" aria-label="Name" required />
-          <button class="remove" type="button" title="Remove this agent" aria-label="Remove this agent">×</button>
-        </div>
-        <div class="two">
-          <label>
-            Model
-            <select name="model">
-              <option value="hybrid">1.5 voice · 1 mind</option>
-              <option value="1.5">Higgs 1.5</option>
-              <option value="1">Higgs 1</option>
-            </select>
-          </label>
-          <label>
-            Voice
-            <select name="voice">
-              <option>chloe</option>
-              <option>eleanor</option>
-              <option>jake</option>
-              <option>marcus</option>
-              <option>nora</option>
-              <option>oliver</option>
-            </select>
-          </label>
-        </div>
-        <p class="model-hint hint"></p>
-        <label class="inline check">
-          <input name="mind" type="checkbox" />
-          <span>Private mind <span class="optional">(thinks before speaking, can cut in mid-sentence; shows its thoughts)</span></span>
-        </label>
-        <label>Who they are <textarea name="role" rows="2" maxlength="400" placeholder="e.g. the team's lead engineer."></textarea></label>
-        <label>Their goal <textarea name="goal" rows="2" maxlength="400" placeholder="What they want out of this conversation."></textarea></label>
-        <label><span>What they know for certain <span class="optional">(optional)</span></span><textarea name="facts" rows="2" maxlength="400" placeholder="Facts they'll defend, and cut in over."></textarea></label>
-      </fieldset>
-    </template>
-
     <script type="module" src="app.js"></script>
   </body>
 </html>

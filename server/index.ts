@@ -1,6 +1,5 @@
 /**
- * Web room: serves web/ and runs one BrowserRoom per WebSocket on /room, and
- * one SelectorRoom (the agent selector demo, /selector.html) per WebSocket on /selector.
+ * The agent selector: serves web/ and runs one SelectorRoom per WebSocket on /selector.
  * The API key stays here; the page never sees it. Binds to localhost only.
  *
  *   npm run web          then open http://localhost:3000
@@ -14,7 +13,6 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import { loadApiKey } from "../src/audio/tts";
 import { MODEL } from "../src/realtime/events";
-import { BrowserRoom } from "./BrowserRoom";
 import { SelectorRoom } from "./SelectorRoom";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -54,19 +52,10 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// Two WebSocket endpoints on one server need noServer and our own upgrade routing.
-const wss = new WebSocketServer({ noServer: true });
-const selectorWss = new WebSocketServer({ noServer: true });
-server.on("upgrade", (req, socket, head) => {
-  const path = new URL(req.url ?? "/", "http://localhost").pathname;
-  const target = path === "/room" ? wss : path === "/selector" ? selectorWss : null;
-  if (!target) return void socket.destroy();
-  target.handleUpgrade(req, socket, head, (ws) => target.emit("connection", ws, req));
-});
-
-selectorWss.on("connection", (ws) => {
+const wss = new WebSocketServer({ server, path: "/selector" });
+wss.on("connection", (ws) => {
   const room = new SelectorRoom(ws, apiKey, (line) => log(`[selector] ${line}`));
-  log("[web] selector page connected");
+  log("[web] page connected");
   const fail = (e: unknown) => {
     log(`[web] error: ${e instanceof Error ? e.message : String(e)}`);
     room.send({ type: "error", text: e instanceof Error ? e.message : String(e) });
@@ -85,36 +74,11 @@ selectorWss.on("connection", (ws) => {
     else if (msg.type === "diag") room.diag(msg);
   });
   ws.on("close", () => {
-    log("[web] selector page disconnected");
-    void room.close().catch(() => undefined);
-  });
-});
-
-wss.on("connection", (ws) => {
-  const room = new BrowserRoom(ws, apiKey, (line) => log(`[room] ${line}`));
-  log("[web] page connected");
-  const fail = (e: unknown) => {
-    log(`[web] error: ${e instanceof Error ? e.message : String(e)}`);
-    room.send({ type: "error", text: e instanceof Error ? e.message : String(e) });
-  };
-  ws.on("message", (data, isBinary) => {
-    if (isBinary) return room.mic(data as Buffer);
-    let msg: { type?: string; [k: string]: unknown };
-    try {
-      msg = JSON.parse(String(data));
-    } catch {
-      return;
-    }
-    if (msg.type === "start") room.start(msg as never).catch(fail);
-    else if (msg.type === "say") room.say(String(msg.text ?? "")).catch(fail);
-    else if (msg.type === "diag") room.diag(msg);
-  });
-  ws.on("close", () => {
     log("[web] page disconnected");
     void room.close().catch(() => undefined);
   });
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  log(`web room on http://localhost:${PORT}  (model ${MODEL}); logging to ${logPath}`);
+  log(`agent selector on http://localhost:${PORT}  (model ${MODEL}); logging to ${logPath}`);
 });

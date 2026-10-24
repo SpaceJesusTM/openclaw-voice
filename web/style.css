@@ -1,3 +1,4 @@
+/* Agent selector: talk to planner, coder and jester; a silent overseer picks who answers. */
 :root {
   --bg: #f6f5f2;
   --panel: #ffffff;
@@ -11,11 +12,9 @@
   --p0: #3b5bdb;
   --p1: #c2410c;
   --p2: #7c3aed;
-  --p3: #0f766e;
   --human: #475569;
-  --wait: #868e96;
   --speak: #2f9e44;
-  --interrupt: #e03131;
+  --wait: #868e96;
   --radius: 12px;
   color-scheme: light;
 }
@@ -33,11 +32,9 @@
     --p0: #748ffc;
     --p1: #ff922b;
     --p2: #b197fc;
-    --p3: #38d9a9;
     --human: #94a3b8;
-    --wait: #909296;
     --speak: #51cf66;
-    --interrupt: #ff6b6b;
+    --wait: #909296;
     color-scheme: dark;
   }
 }
@@ -63,13 +60,48 @@ h2 {
   margin: 0 0 6px;
 }
 button,
-input,
-select,
-textarea {
+input {
   font: inherit;
   color: inherit;
 }
+input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: var(--text);
+  width: 100%;
+  min-width: 0;
+}
+input[type="checkbox"] {
+  width: auto;
+}
+button {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+label.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
 
+/* Header */
 .bar {
   display: flex;
   align-items: center;
@@ -77,22 +109,17 @@ textarea {
   padding: 14px 20px;
   border-bottom: 1px solid var(--line);
 }
+.bar-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
 .pill {
   font-size: 13px;
   padding: 3px 10px;
   border-radius: 999px;
   border: 1px solid var(--line);
   color: var(--muted);
-}
-.bar-right {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.tile .cost {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 6px;
 }
 .pill.live {
   color: var(--speaking);
@@ -128,173 +155,14 @@ main {
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
-  justify-content: space-between;
 }
 
-/* Setup */
-.setup {
-  display: grid;
-  gap: 14px;
-}
-.setup-head {
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
-.setup-head > div {
-  flex: 1 1 380px;
-}
-label.you {
-  max-width: 320px;
-  margin-bottom: 10px;
-}
-.preset select {
-  width: auto;
-  min-width: 240px;
-}
-.agents-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
-}
-.card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-top: 4px solid var(--c, var(--line));
-  border-radius: var(--radius);
-  padding: 12px;
-  margin: 0;
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-.card-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--c);
-  flex: none;
-}
-.name-input {
-  font-weight: 600;
-  font-size: 16px;
-}
-.remove {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  font-size: 18px;
-  line-height: 1;
-}
-.two {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.model-hint {
-  margin: -2px 0 0;
-  min-height: 2.6em;
-}
-label {
-  display: grid;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--muted);
-}
-label.inline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.optional {
-  font-weight: normal;
-}
-input,
-select,
-textarea {
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 7px 9px;
-  color: var(--text);
-  width: 100%;
-  min-width: 0;
-}
-label.inline input[type="number"] {
-  width: 70px;
-}
-input[type="checkbox"] {
-  width: auto;
-}
-textarea {
-  resize: vertical;
-}
-
-button {
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 8px;
-  padding: 8px 14px;
-  cursor: pointer;
-}
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
-  font-weight: 600;
-}
-button.ghost {
-  background: transparent;
-}
-button.small-btn {
-  padding: 4px 10px;
-  font-size: 13px;
-}
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* Live room */
-.room {
-  display: grid;
-  grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
-  gap: 16px;
-  align-items: start;
-}
-@media (max-width: 900px) {
-  .room {
-    grid-template-columns: 1fr;
-  }
-}
-.stage {
-  display: grid;
-  gap: 12px;
-}
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 10px;
-}
+/* Agent tiles */
 .tile {
   background: var(--panel);
   border: 2px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
-  transition: border-color 0.15s, box-shadow 0.15s;
   min-width: 0;
 }
 .tile-head {
@@ -321,50 +189,6 @@ button:disabled {
   font-size: 12px;
   color: var(--muted);
 }
-.tile.speaking {
-  border-color: var(--speaking);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--speaking) 20%, transparent);
-}
-.tile.speaking .what::after {
-  content: " · speaking";
-  color: var(--speaking);
-}
-
-/* An agent's private mind, live */
-.mind {
-  margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--bg);
-  border: 1px dashed var(--line);
-  min-height: 96px;
-}
-.mind.fresh {
-  animation: fresh 1.2s ease-out;
-}
-@keyframes fresh {
-  from {
-    border-color: var(--c);
-    background: color-mix(in srgb, var(--c) 12%, var(--bg));
-  }
-}
-.mind-top {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.mind-thought {
-  font-style: italic;
-  font-size: 14px;
-  margin-top: 4px;
-}
-.mind-detail {
-  font-size: 13px;
-  color: var(--muted);
-  margin-top: 2px;
-}
 .chip {
   display: inline-block;
   font-size: 11px;
@@ -377,75 +201,8 @@ button:disabled {
   color: var(--muted);
   font-style: normal;
 }
-.chip.wait {
-  color: var(--wait);
-  border-color: var(--wait);
-}
-.chip.speak {
-  color: var(--speak);
-  border-color: var(--speak);
-}
-.chip.interrupt {
-  color: #fff;
-  background: var(--interrupt);
-  border-color: var(--interrupt);
-}
-.chip.spoke {
-  color: var(--speak);
-  border-color: var(--speak);
-}
-.chip.silent {
-  color: var(--wait);
-  border-color: var(--wait);
-}
-.chip.working,
-.chip.start_work {
-  color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.chip.done {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-label.check {
-  font-size: 13px;
-  align-items: flex-start;
-}
-label.check input {
-  margin-top: 3px;
-}
 
-/* A deliverable an agent produced after leaving to work */
-.work {
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--c, var(--accent));
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--bg);
-}
-.work-head {
-  font-size: 13px;
-  color: var(--muted);
-}
-.work-head b {
-  color: var(--c, var(--text));
-}
-.work-body {
-  white-space: pre-wrap;
-  margin-top: 6px;
-  font-size: 14px;
-}
-
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.toggle.on {
-  border-color: var(--speaking);
-  color: var(--speaking);
-}
+/* Mic */
 .meter {
   flex: 1;
   height: 8px;
@@ -454,28 +211,11 @@ label.check input {
   border: 1px solid var(--line);
   overflow: hidden;
 }
-#meter-fill,
-#speaker-fill {
+#meter-fill {
   height: 100%;
   width: 0;
   background: var(--speaking);
   transition: width 0.08s linear;
-}
-#speaker-fill {
-  background: var(--accent);
-}
-.sound-row {
-  margin-top: 8px;
-}
-.meter-label {
-  font-size: 12px;
-  color: var(--muted);
-  width: 72px;
-  flex: none;
-}
-.sound-note {
-  margin: 8px 0 0;
-  color: var(--error);
 }
 .say {
   display: flex;
@@ -490,18 +230,6 @@ label.check input {
 }
 
 /* Transcript */
-.transcript-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.transcript-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
 .transcript {
   list-style: none;
   margin: 8px 0 0;
@@ -528,23 +256,102 @@ label.check input {
   font-size: 12px;
   margin-left: 6px;
 }
-.thought {
-  font-size: 13px;
-  color: var(--muted);
-  padding-left: 13px;
-}
-.thought b {
-  color: var(--c, var(--muted));
-}
-.thought .text {
-  font-style: italic;
-  color: var(--text);
-}
 .note {
   font-size: 12px;
   color: var(--muted);
   padding-left: 13px;
 }
-.hide-thoughts .thought {
-  display: none;
+
+/* Selector layout */
+#room {
+  display: grid;
+  gap: 14px;
+}
+.intro {
+  max-width: 640px;
+}
+.sel-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.sel-tiles .tile {
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  opacity: 0.55;
+  transition: opacity 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.sel-tiles .tile:hover {
+  opacity: 0.8;
+}
+.sel-tiles .tile.active {
+  opacity: 1;
+  border-color: var(--c);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 25%, transparent);
+}
+.sel-tiles .tile.speaking .avatar {
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--c) 30%, transparent);
+  }
+}
+.sel-tiles .state {
+  margin-top: 8px;
+}
+.sel-tiles .tile.active .state .chip {
+  color: var(--c);
+  border-color: var(--c);
+}
+.overseer {
+  --c: var(--human);
+}
+.overseer .who {
+  font-weight: 600;
+}
+.overseer .what {
+  font-size: 13px;
+  color: var(--muted);
+}
+#hearing.on {
+  color: var(--speak);
+  border-color: var(--speak);
+}
+.decisions {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+.decisions li {
+  color: var(--muted);
+}
+.decisions li b {
+  color: var(--text);
+}
+.decisions li.text {
+  font-style: italic;
+}
+.talk .row {
+  justify-content: flex-start;
+}
+.talk .meter {
+  max-width: 240px;
+}
+.transcript .cut::after {
+  content: " (cut off)";
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 560px) {
+  .bar {
+    padding: 12px 16px;
+  }
 }

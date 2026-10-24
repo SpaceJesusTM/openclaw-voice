@@ -1,15 +1,11 @@
 @echo off
-rem Voice Room launcher: checks Node, installs dependencies, checks the API key,
+rem Agent selector launcher: checks Node, installs dependencies, checks the API key,
 rem starts the server and opens http://localhost:3000 in your browser.
 rem Set NO_BROWSER=1 to skip opening the browser. Set PORT to use another port.
-rem Set PRESET to open with a preset selected (demo-thoughts.bat does).
-rem Set PAGE to open another page, e.g. selector.html (selector.bat does).
 setlocal
 cd /d "%~dp0"
 if not defined PORT set PORT=3000
 set URL=http://localhost:%PORT%/
-if defined PRESET set URL=http://localhost:%PORT%/?preset=%PRESET%
-if defined PAGE set URL=http://localhost:%PORT%/%PAGE%
 
 where node >nul 2>nul
 if errorlevel 1 (
@@ -49,10 +45,10 @@ if errorlevel 1 (
 
 netstat -ano | findstr /r /c:":%PORT% .*LISTENING" >nul
 if not errorlevel 1 (
-  rem Already serving the Voice Room? Then just open it.
-  curl.exe -s -f -o nul http://127.0.0.1:%PORT%/presets.js >nul 2>nul
+  rem Already serving the agent selector? Then just open it.
+  curl.exe -s -f -o nul http://127.0.0.1:%PORT%/app.js >nul 2>nul
   if not errorlevel 1 (
-    echo Voice Room is already running on port %PORT%; opening it.
+    echo The agent selector is already running on port %PORT%; opening it.
     if not defined NO_BROWSER start "" %URL%
     exit /b 0
   )
@@ -61,7 +57,7 @@ if not errorlevel 1 (
   exit /b 1
 )
 
-echo Starting Voice Room on http://localhost:%PORT%  (Chrome recommended; headphones help)
+echo Starting the agent selector on http://localhost:%PORT%  (Chrome recommended; headphones help)
 echo Close this window, or press Ctrl+C, to stop it.
 if not defined NO_BROWSER start "" cmd /c "timeout /t 3 /nobreak >nul & start "" %URL%"
 call npm run web

@@ -5,9 +5,8 @@
  *
  *   npm run probe -- connect         key + model-name sanity check (cheapest)
  *   npm run probe                    all quick checks (everything except idle)
- *   npm run probe -- commit mind     just those checks
+ *   npm run probe -- commit relay    just those checks
  *   npm run probe -- idle            the ~7 minute idle-timeout check
- *   npm run probe -- compare         higgs-realtime vs 1.5-preview, side by side (COMPARE_TRIALS=3)
  *   npm run probe -- --quiet ...     findings only, no per-event log
  */
 // First import, so .env is loaded before any module reads process.env at
@@ -16,10 +15,8 @@ import "dotenv/config";
 import { loadApiKey } from "./audio";
 import { CheckContext, type Finding } from "./harness";
 import { commitCheck } from "./checks/commit";
-import { compareCheck } from "./checks/compare";
 import { connectCheck } from "./checks/connect";
 import { idleCheck } from "./checks/idle";
-import { mindCheck } from "./checks/mind";
 import { modalityCheck } from "./checks/modality";
 import { relayCheck } from "./checks/relay";
 import { timingCheck } from "./checks/timing";
@@ -29,14 +26,12 @@ const CHECKS: Record<string, (ctx: CheckContext) => Promise<void>> = {
   connect: connectCheck,
   commit: commitCheck,
   relay: relayCheck,
-  mind: mindCheck,
   timing: timingCheck,
   modality: modalityCheck,
   voices: voicesCheck,
   idle: idleCheck,
-  compare: compareCheck,
 };
-const QUICK = ["connect", "commit", "relay", "mind", "timing", "modality", "voices"];
+const QUICK = ["connect", "commit", "relay", "timing", "modality", "voices"];
 
 async function main() {
   const args = process.argv.slice(2);

@@ -3,11 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Multi-agent voice rooms on Boson Higgs Realtime",
+  "description": "Talk to planner, coder and jester on Boson Higgs Realtime; a silent overseer picks who answers",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "probe": "tsx tools/probe/index.ts",
-    "demo": "tsx demo/run.ts",
     "web": "tsx server/index.ts"
   },
   "dependencies": {

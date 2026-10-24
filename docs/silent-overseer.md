@@ -1,6 +1,6 @@
 # The silent overseer: one listener that routes, voices that talk
 
-Lessons from building the agent selector demo (`web/selector.html`, branch
+Lessons from building the agent selector (`web/index.html`, branch
 `agent-selector-demo`, 2026-10-24) on Boson Higgs Realtime. The code is in
 [server/SelectorRoom.ts](../server/SelectorRoom.ts) and
 [server/SelectorVoice.ts](../server/SelectorVoice.ts).
@@ -66,7 +66,7 @@ The roles are split cleanly:
 | [server/SelectorVoice.ts](../server/SelectorVoice.ts) | One agent's voice session: operation queue, reply state machine, cancel and retry rules |
 | [src/agent/selectorAgents.ts](../src/agent/selectorAgents.ts) | Personas, the overseer prompt, the `call_agent` tool |
 | [src/audio/LevelGate.ts](../src/audio/LevelGate.ts) | Adaptive speech/silence gate on mic chunks (pause detection for drafts) |
-| [web/selector.html](../web/selector.html), `selector.js`, `selector.css` | The page: mic, playback, tiles, overseer decisions, transcript with per-reply latency |
+| [web/index.html](../web/index.html), `app.js`, `style.css` | The page: mic, playback, tiles, overseer decisions, transcript with per-reply latency |
 | [tools/probe/selectorClient.ts](../tools/probe/selectorClient.ts) | Headless end-to-end test: talks to the room with synthesized speech |
 | `tools/probe/vadToggle.ts`, `cancelEarly.ts`, `responseIds.ts`, `transcriptLength.ts` | Probes for the Higgs behaviors in the next section |
 

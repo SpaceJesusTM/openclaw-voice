@@ -2,6 +2,8 @@
 
 Measured on 2026-10-24 with `npm run probe -- compare` (identical TTS input audio for both models, a fresh session per trial) and one `npm run demo` run per model. Boson has published no release notes for 1.5. The docs still list only `higgs-realtime`.
 
+> The `compare` probe check that produced these numbers used the peer-convo room's private minds; it was removed from this branch along with that room and lives on the `peer-convo-demo` branch.
+
 ## Single-turn results
 
 Second run: 3 trials per model, 3 sessions at a time. The first run gave the same picture.

@@ -1,12 +1,11 @@
 import WebSocket from "ws";
 import { AGENT_NAMES, CALL_AGENT, OVERSEER_PROMPT, PERSONAS, parseCall, type AgentName } from "../src/agent/selectorAgents";
-import { LevelGate } from "../src/audio/LevelGate";
+import { DEFAULT_LEVEL_GATE, LevelGate } from "../src/audio/LevelGate";
 import { CHUNK_SAMPLES, concat, msOf, samplesOf } from "../src/audio/pcm";
 import { MODEL, SERVER, functionCallOutput, responseCreate, textItem, type ServerEvent } from "../src/realtime/events";
 import { costOf, sumUsage } from "../src/realtime/pricing";
 import { RealtimeSession, type SessionLog } from "../src/realtime/RealtimeSession";
 import { buildSessionConfig } from "../src/realtime/sessionConfig";
-import { DEFAULT_LIVE_FEED } from "../src/room/LiveFeed";
 import { SelectorVoice, type Reply } from "./SelectorVoice";
 
 /**
@@ -87,7 +86,7 @@ export class SelectorRoom {
   private heardTo = new Map<AgentName, number>();
   private turn: { startMs: number; endMs?: number } | null = null;
   /** Says which mic chunks are speech, for spotting pauses inside a turn. */
-  private gate = new LevelGate(DEFAULT_LIVE_FEED);
+  private gate = new LevelGate(DEFAULT_LEVEL_GATE);
   private quietMs = 0;
   /** When, and up to which mic sample, you were last heard speaking. */
   private lastSpeechAt = 0;

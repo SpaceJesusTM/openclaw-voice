@@ -9,6 +9,9 @@ export interface LevelGateOptions {
   floorWindowMs: number;
 }
 
+/** Tuned on real mics (including browser auto-gain) in the earlier peer-convo room. */
+export const DEFAULT_LEVEL_GATE: LevelGateOptions = { threshold: 600, snr: 3, floorWindowMs: 3000 };
+
 /**
  * Says whether a chunk of mic audio is speech. It adapts: a fixed threshold
  * let a noisy mic (or browser auto-gain) count as non-stop speech. Speech must
