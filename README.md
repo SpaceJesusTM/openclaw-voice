@@ -43,11 +43,15 @@ conversation. Planner starts. Click a tile to switch yourself.
 
 Double-click **`selector.bat`**, or open http://localhost:3000/selector.html.
 
-- The overseer is a text-only session (Higgs 1) with server VAD: it never makes
-  a sound, and its turn detection drives everyone. Agents (Higgs 1.5) run manual turns.
+- Everything runs on Higgs 1.5. The overseer is a text-only session with server
+  VAD: it never makes a sound, routes on your raw audio, and its turn detection
+  drives everyone. Agents run manual turns. A failed overseer decision
+  (1.5's occasional `upstream_error`) is retried once.
 - Talking over an agent cuts it off. A switch cuts the old agent and the new one replies.
 - Measured 2026-10-24: an agent is audible ~0.5–0.8 s after it's asked; after a
-  switch, ~2.1 s (still being looked into). The overseer decides ~0.5 s after you stop.
+  switch, ~1.3–2.3 s. The overseer decides 0.5–1.9 s after you stop, so the old
+  agent is sometimes heard for a moment before it's cut. A failed agent reply is
+  retried once, about 2 s later.
 - `npx tsx tools/probe/selectorClient.ts [port]` talks to it with synthesized speech and prints what happens.
 
 ## Models

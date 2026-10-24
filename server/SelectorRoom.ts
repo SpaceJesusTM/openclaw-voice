@@ -7,8 +7,12 @@ import { RealtimeSession, type SessionLog } from "../src/realtime/RealtimeSessio
 import { buildSessionConfig } from "../src/realtime/sessionConfig";
 import { SelectorVoice, type Reply } from "./SelectorVoice";
 
-/** Higgs 1 for the overseer: its tool calls land ~0.5 s after you stop, and it doesn't fail under load. */
-const OVERSEER_MODEL = "higgs-realtime";
+/**
+ * Higgs 1.5 for the overseer, as for the agents. Higgs 1 decided faster (~0.5 s
+ * after you stop) but misheard requests on raw audio ("Coder, quick one" ->
+ * jester); routing stays on audio, so it gets the better listener.
+ */
+const OVERSEER_MODEL = MODEL;
 /**
  * Pipecat's example settings, but 700 ms of silence instead of 500: at 500 a
  * pause between sentences ended the turn, and the overseer misjudged the
@@ -52,6 +56,8 @@ export class SelectorRoom {
   private turn: { startMs: number; endMs?: number } | null = null;
   /** Every word of yours shown so far, normalized. */
   private heard: string[] = [];
+  /** The overseer's decision on this turn has already been retried once. */
+  private overseerRetried = false;
   private ticker: NodeJS.Timeout | null = null;
   private startedAt = 0;
   private started = false;
@@ -132,6 +138,7 @@ export class SelectorRoom {
     const note = `(The user typed: "${line}")`;
     for (const v of this.voices.values()) void v.note(note);
     this.overseer.send(textItem(note));
+    this.overseerRetried = false;
     if (!this.overseer.generating) this.overseer.send(responseCreate());
     this.reply(this.active);
   }
@@ -157,7 +164,18 @@ export class SelectorRoom {
       if (this.turn) this.turn.endMs = Number(e.audio_end_ms ?? msOf(this.micSamples));
       this.send({ type: "hearing", on: false });
     } else if (e.type === SERVER.audioCommitted) {
+      this.overseerRetried = false;
       this.onUserTurn();
+    } else if (e.type === SERVER.responseDone) {
+      // The 1.5 preview fails some responses outright ("upstream_error", status
+      // "failed"), which is no decision at all. Ask again once, unless you've
+      // started talking again (then the next turn brings a fresh decision).
+      const status = (e.response as { status?: string } | undefined)?.status;
+      if (status === "failed" && !this.overseerRetried && !this.turn) {
+        this.overseerRetried = true;
+        this.log("overseer response failed; asking again");
+        o.send(responseCreate());
+      }
     } else if (e.type === SERVER.transcriptionCompleted) {
       const text = newWords(this.heard, String(e.transcript ?? "").trim());
       this.heard.push(...words(text));

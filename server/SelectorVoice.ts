@@ -31,6 +31,8 @@ export interface Reply {
   fragments: { text: string; endMs: number }[];
   transcript: string;
   cancelled: boolean;
+  /** Re-requested once after the server failed it. */
+  retried: boolean;
   askedAt: number;
   /** Samples the room has played of it. */
   sent: number;
@@ -102,6 +104,7 @@ export class SelectorVoice {
       fragments: [],
       transcript: "",
       cancelled: false,
+      retried: false,
       askedAt: 0,
       sent: 0,
       ended: new Promise<void>((res) => (finish = res)),
@@ -171,6 +174,16 @@ export class SelectorVoice {
     else if (e.type === SERVER.audioTranscriptDone) r.transcript = String(e.transcript ?? "");
     else if (e.type === SERVER.responseDone) {
       const status = String((e.response as { status?: string } | undefined)?.status ?? "");
+      // The 1.5 preview fails some responses outright ("upstream_error"). One that
+      // produced no audio yet is asked for again, once, so you're never left in silence.
+      if (status === "failed" && !r.cancelled && !r.retried && r.audio.length === 0) {
+        this.log(`${this.name}: reply failed before any audio; asking again`);
+        r.retried = true;
+        r.state = "requested";
+        r.responseId = "";
+        this.session.send(responseCreate());
+        return;
+      }
       this.end(r, status === "failed" ? "failed" : r.cancelled ? "cancelled" : "completed");
     }
   }
