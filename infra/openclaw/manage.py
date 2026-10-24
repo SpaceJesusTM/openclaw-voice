@@ -125,7 +125,7 @@ def initialize(timezone: str, name: str, port: int) -> None:
     templates = ROOT / "workspace"
     count = 0
     for source in sorted(templates.rglob("*")):
-        if source.is_file():
+        if source.is_file() and source.suffix != ".pyc" and "__pycache__" not in source.parts:
             target = owned_path(LOCAL / "state/workspace" / source.relative_to(templates))
             existed = target.exists()
             text = source.read_text(encoding="utf-8").replace(
