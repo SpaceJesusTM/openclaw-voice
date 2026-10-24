@@ -11,7 +11,9 @@ validated experiment): barge-in stops speech, never a tool or a job.
 
 from __future__ import annotations
 
+import json
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from pipecat.adapters.schemas.direct_function import tool_options
@@ -115,23 +117,50 @@ class VoiceTools:
     def _wrap(self, method):
         @tool_options(cancel_on_interruption=False)
         async def handler(params: FunctionCallParams) -> None:
-            started = time.perf_counter()
-            name = params.function_name
-            arguments = dict(params.arguments or {})
-            self.session.trace.record("tool.started", call_id=params.tool_call_id, name=name, arguments=arguments)
-            self.session.ui("tool", {"phase": "started", "name": name, "call_id": params.tool_call_id, "arguments": arguments})
-            try:
-                result = await method(params, arguments)
-            except Exception as error:  # noqa: BLE001 - tool failures become honest results
-                result = {"status": "error", "error": type(error).__name__, "note": "Tell the user this failed."}
-            ms = round((time.perf_counter() - started) * 1000, 1)
-            meta = {k: result.get(k) for k in ("status", "cache", "age_seconds", "job_id", "topic", "read_ms") if k in result}
-            self.session.trace.record("tool.result", call_id=params.tool_call_id, name=name, result=result, ms=ms)
-            self.session.ui("tool", {"phase": "result", "name": name, "call_id": params.tool_call_id, "ms": ms, **meta})
+            result = await self._invoke(method, params, params.function_name, dict(params.arguments or {}))
             await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
         handler.__name__ = method.__name__
         return handler
+
+    async def _invoke(self, method, params, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        call_id = getattr(params, "tool_call_id", None)
+        self.session.trace.record("tool.started", call_id=call_id, name=name, arguments=arguments)
+        self.session.ui("tool", {"phase": "started", "name": name, "call_id": call_id, "arguments": arguments})
+        try:
+            result = await method(params, arguments)
+        except Exception as error:  # noqa: BLE001 - tool failures become honest results
+            result = {"status": "error", "error": type(error).__name__, "note": "Tell the user this failed."}
+        ms = round((time.perf_counter() - started) * 1000, 1)
+        meta = {k: result.get(k) for k in ("status", "cache", "age_seconds", "job_id", "topic", "read_ms") if k in result}
+        self.session.trace.record("tool.result", call_id=call_id, name=name, result=result, ms=ms)
+        self.session.ui("tool", {"phase": "result", "name": name, "call_id": call_id, "ms": ms, **meta})
+        return result
+
+    async def run(self, name: str, arguments_json: str | None, call_id: str) -> dict[str, Any]:
+        """Run one tool call outside a Pipecat pipeline (Team mode); same handlers and results."""
+        methods = {
+            "get_context": self.get_context,
+            "delegate_task": self.delegate_task,
+            "check_tasks": self.check_tasks,
+            "cancel_task": self.cancel_task,
+        }
+        method = methods.get(name)
+        if method is None:
+            return {"status": "error", "error": "unknown_tool", "note": "That tool does not exist."}
+        try:
+            arguments = json.loads(arguments_json or "{}")
+        except ValueError:
+            arguments = None
+        if not isinstance(arguments, dict):
+            return {"status": "rejected", "note": "The tool arguments were not valid JSON; call it again."}
+        params = SimpleNamespace(tool_call_id=call_id, function_name=name, arguments=arguments)
+        return await self._invoke(method, params, name, arguments)
+
+    def realtime_tools(self) -> list[dict[str, Any]]:
+        """The same tool schemas in Higgs Realtime session format."""
+        return [{"type": "function", **schema.to_default_dict()} for schema in self.schemas()]
 
     # ------------------------------------------------------------ handlers
     async def get_context(self, params: FunctionCallParams, arguments: dict[str, Any]) -> dict[str, Any]:

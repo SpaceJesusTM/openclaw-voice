@@ -245,21 +245,7 @@ class AnnouncementCoordinator:
         self._publish()
 
     def compose(self, items: list[dict[str, Any]]) -> str:
-        if len(items) == 1:
-            item = items[0]
-            when = "finished earlier, while the user was away" if item["earlier"] else "just finished"
-            return (
-                f"{NOTICE_PREFIX} A background task for {self.agent_name} {when} (task {item['job_id']}). "
-                f"Result: {_closed(item['text'])} "
-                "Tell the user now in one or two short, natural sentences, once. Do not call any tools for this "
-                "notice. This notice is not from the user."
-            )
-        lines = " ".join(f"({n}) {_closed(item['text'])}" for n, item in enumerate(items, 1))
-        return (
-            f"{NOTICE_PREFIX} {len(items)} background tasks for {self.agent_name} finished. {lines} "
-            "Tell the user briefly, one short sentence each, once. Do not call any tools for this notice. "
-            "This notice is not from the user."
-        )
+        return compose_notice(self.agent_name, items)
 
     async def _deliver(self) -> None:
         items = [self._pending.popleft() for _ in range(min(MAX_COALESCE, len(self._pending)))]
@@ -345,6 +331,25 @@ class FloorObserver(BaseObserver):
                     content = message.get("content")
                     if isinstance(content, str):
                         self.c.on_user_words(content)
+
+
+def compose_notice(agent_name: str, items: list[dict[str, Any]]) -> str:
+    """The system notice that asks the voice model to relay finished background tasks once."""
+    if len(items) == 1:
+        item = items[0]
+        when = "finished earlier, while the user was away" if item["earlier"] else "just finished"
+        return (
+            f"{NOTICE_PREFIX} A background task for {agent_name} {when} (task {item['job_id']}). "
+            f"Result: {_closed(item['text'])} "
+            "Tell the user now in one or two short, natural sentences, once. Do not call any tools for this "
+            "notice. This notice is not from the user."
+        )
+    lines = " ".join(f"({n}) {_closed(item['text'])}" for n, item in enumerate(items, 1))
+    return (
+        f"{NOTICE_PREFIX} {len(items)} background tasks for {agent_name} finished. {lines} "
+        "Tell the user briefly, one short sentence each, once. Do not call any tools for this notice. "
+        "This notice is not from the user."
+    )
 
 
 def _closed(text: str) -> str:

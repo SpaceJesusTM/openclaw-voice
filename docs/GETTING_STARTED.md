@@ -1,7 +1,9 @@
-# Getting started: run and test ClawVoice (Priority 1 baseline)
+# Getting started: run and test ClawVoice
 
-Baseline: branch `release/p1-stable`, tag `v0.1.0`. One voiced agent (Tari)
-on Boson Higgs Realtime 1.5 Preview + Pipecat, backed by a real OpenClaw agent.
+Baseline: branch `release/p1-stable`, tag `v0.1.0`: one voiced agent (Tari) on
+Boson Higgs Realtime 1.5 Preview + Pipecat, backed by a real OpenClaw agent.
+Branch `feat/p2a-team-voice` adds Astra (a coding agent) and **Team mode**, both
+agents in one room ([team-voice.md](team-voice.md)).
 Full reference: [voice.md](voice.md). Evidence: [voice-validation.md](voice-validation.md).
 
 ## Prerequisites (once)
@@ -48,7 +50,7 @@ Offline (no provider calls):
 
 ```sh
 python3 -m unittest discover -s infra/openclaw/tests   # Gateway setup, Google wrapper, planner, unified schedule
-node --test apps/web/tests/microphone.test.cjs          # browser mic / push-to-talk gate
+node --test apps/web/tests/microphone.test.cjs apps/web/tests/agent_selector.test.cjs  # mic gate, agent/Team selector
 cd services/voice && make check                         # voice runtime: pytest + Ruff + compile
 ```
 
@@ -63,6 +65,45 @@ remove them:
 .venv/bin/python probes/p1_probe.py --live                   # Gmail latest + unified schedule lifecycle
 node probes/ui_probe.mjs --live                              # browser path
 .venv/bin/python probes/voice_probe.py --help                # all scenarios (a-j)
+```
+
+## Team mode: Tari and Astra together
+
+Start both isolated OpenClaw agents (Astra once initialized and authorized, see
+[infra/openclaw/README.md](../infra/openclaw/README.md#isolated-astra-coding-agent---agent-astra)),
+then the voice server:
+
+```sh
+python3 infra/openclaw/manage.py start                          # Tari's Gateway (127.0.0.1:18939)
+python3 infra/openclaw/manage.py update-workspace
+python3 infra/openclaw/manage.py --agent astra start            # Astra's Gateway (18949) and preview port (18950)
+python3 infra/openclaw/manage.py --agent astra update-workspace
+cd services/voice && make dev                                   # http://127.0.0.1:7860
+```
+
+Open the page, choose **Team**, click **Connect** once (headphones). Start every
+request with a name. Tari and Astra each have a seat that shows speaking, waiting to
+speak, thinking, listening and background work; the transcript labels who spoke.
+
+| Say | Expected |
+| --- | --- |
+| "Hey Tari, what's on my calendar tomorrow?" | Tari answers (cache or live lookup) |
+| "Okay Astra, what coding projects are you working on?" | Astra answers from its project cache |
+| "Astra, create a simple personal portfolio website." | Astra: "On it"; a real coding job runs (Astra's seat shows work) |
+| "Hey Tari, what's my next meeting?" (while Astra works) | Tari answers at once; Astra keeps working |
+| "Tari, explain my schedule tomorrow in a little more detail." | Tari answers; if Astra's job finishes meanwhile, its announcement waits for a pause |
+| (after Astra announces) open http://127.0.0.1:18950 | The real site Astra built |
+| "Astra, change the main heading to My Personal Portfolio." | A real edit, announced only after read-back |
+| "Hey Tari, what's on my planner today?" then at once "Okay Astra, what's the latest website update?" | Both answer, one after the other, never together |
+| "What's the weather like?" (no name) | Nobody answers; marked "not addressed" |
+| Talk over an agent / "Stop." / "Tari, stop." | Speech stops (everyone's / Tari's); jobs keep running |
+| "Astra, cancel the website task." | Only Astra's job is cancelled |
+| Switch to **Tari** or **Astra** | The single-agent modes, unchanged; jobs and history are kept |
+
+Quick automated check (live, nothing changed; `--notice` adds a read-only OpenClaw question):
+
+```sh
+cd services/voice && .venv/bin/python probes/team_probe.py --live --speech --stop
 ```
 
 ## Optional: WebSocket transport

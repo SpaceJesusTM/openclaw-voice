@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function setupEnv() {
+function setupEnv({ team = false } = {}) {
   const nodes = new Map();
   const styles = new Map();
   const element = () => ({
@@ -17,11 +17,15 @@ function setupEnv() {
     className: '',
     handlers: {},
     children: [],
+    dataset: {},
+    style: { setProperty() {} },
+    classList: { added: [], add(c) { this.added.push(c); }, remove() {} },
     addEventListener(type, fn) { this.handlers[type] = fn; },
     setAttribute() {},
     setPointerCapture() {},
     pause() { this.paused = true; },
-    querySelector() { return { textContent: '', remove() {} }; },
+    querySelector() { return Object.assign(element(), { remove() {} }); },
+    querySelectorAll() { return []; },
     append(child) { this.children.push(child); },
     prepend(child) { this.children.unshift(child); },
   });
@@ -85,6 +89,7 @@ function setupEnv() {
               { id: 'tari', display_name: 'Tari', emoji: '🟢', color: '#22c55e', role: 'Dependable personal coordinator.' },
               { id: 'astra', display_name: 'Astra', emoji: '🔵', color: '#3b82f6', role: 'Practical coding assistant.' },
             ],
+            ...(team ? { team: { available: true, agents: ['tari', 'astra'] } } : {}),
           }),
         };
       }
@@ -153,4 +158,48 @@ test('Agent selector renders Tari and Astra and switching isolates session, tran
   // Verify a late job event from Tari is ignored while Astra is selected
   env.run('upsertJob({ job_id: "JT2", agent_id: "tari", title: "Late Tari job", status: "completed" }, "job.finished")');
   assert.equal(env.run('ui.jobs.has("JT2")'), false);
+});
+
+test('Team mode shows both agents, labels speakers, owners and routing, and connects once with mode team', async () => {
+  const env = setupEnv({ team: true });
+  await env.run('init()');
+  assert.match(env.nodes.get('agent-selector').innerHTML, /data-agent="team"/);
+
+  env.run('connect = async () => { ui.connectedMode = isTeam() ? "team" : ui.agent.id; };');
+  await env.run('selectAgent("team")');
+  assert.equal(env.run('ui.mode'), 'team');
+  assert.match(env.getUrl(), /\?agent=team/);
+  assert.equal(env.nodes.get('team-seats').hidden, false);
+  assert.equal(env.nodes.get('orb').hidden, true);
+  // Both agents' jobs and cache topics, each labelled with its owner
+  const jobs = env.nodes.get('jobs').innerHTML;
+  assert.match(jobs, /Add Dentist event/);
+  assert.match(jobs, /Create coffee shop website/);
+  assert.match(jobs, /class="owner"[^>]*>Tari</);
+  assert.match(jobs, /class="owner"[^>]*>Astra</);
+  assert.match(env.nodes.get('topics').innerHTML, /Tari · planner\.today/);
+  assert.match(env.nodes.get('topics').innerHTML, /Astra · projects\.active/);
+  assert.match(env.nodes.get('transcript').innerHTML, /address an agent by name/);
+
+  // Replies are labelled with their speaker; a cut reply is marked
+  env.run(`
+    ui.connected = true;
+    onServerMessage({ kind: 'clawvoice.team.user', text: 'Hey Tari, what is on my planner today?', agent: 'tari', status: 'routed', how: 'name' });
+    onServerMessage({ kind: 'clawvoice.team.reply', reply: 2, agent: 'tari', reply_kind: 'answer', phase: 'speaking', text: 'You have three events.' });
+    onServerMessage({ kind: 'clawvoice.team.reply', reply: 3, agent: 'astra', reply_kind: 'answer', phase: 'speaking', text: 'The site title changed.' });
+    onServerMessage({ kind: 'clawvoice.team.reply', reply: 3, agent: 'astra', reply_kind: 'answer', phase: 'cut', text: 'The site…' });
+    onServerMessage({ kind: 'clawvoice.team.user', text: 'What is the weather?', agent: null, status: 'unaddressed' });
+  `);
+  const turns = env.nodes.get('transcript').children;
+  const bots = turns.filter((t) => t.className.startsWith('turn bot'));
+  assert.equal(bots.length, 2);
+  assert.match(bots[0].innerHTML, /Tari/);
+  assert.match(bots[1].innerHTML, /Astra/);
+  assert.ok(bots[1].classList.added.includes('interrupted'));
+  const unaddressed = turns.filter((t) => t.classList.added.includes('unaddressed'));
+  assert.equal(unaddressed.length, 1);
+
+  // A job event from either team agent is kept, keyed by its owner
+  env.run('upsertJob({ job_id: "JT2", agent_id: "tari", title: "Late Tari job", status: "completed" }, "job.finished")');
+  assert.equal(env.run('ui.jobs.has("tari:JT2")'), true);
 });

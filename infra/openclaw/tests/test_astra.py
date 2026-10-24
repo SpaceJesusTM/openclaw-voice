@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -224,3 +225,58 @@ class AstraBootstrapAndHelperTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class AstraHostHelperTrustTests(unittest.TestCase):
+    """The host never executes Astra-writable files and runs only read-only helper commands."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.workspace = Path(self.temp.name) / "astra-workspace"
+        planted = self.workspace / "bin/astra-project"
+        planted.parent.mkdir(parents=True)
+        self.marker = Path(self.temp.name) / "planted-ran"
+        planted.write_text(f"#!/usr/bin/env python3\nopen({str(self.marker)!r}, 'w').write('x')\n")
+        planted.chmod(0o755)
+        self.old_env = os.environ.get("ASTRA_WORKSPACE_DIR")
+        os.environ["ASTRA_WORKSPACE_DIR"] = str(self.workspace)
+        self.addCleanup(self.restore)
+
+    def restore(self) -> None:
+        if self.old_env is None:
+            os.environ.pop("ASTRA_WORKSPACE_DIR", None)
+        else:
+            os.environ["ASTRA_WORKSPACE_DIR"] = self.old_env
+
+    def test_runs_the_tracked_template_isolated_never_the_workspace_copy(self) -> None:
+        calls = []
+        original = manager.subprocess.call
+        manager.subprocess.call = lambda argv, **kwargs: calls.append((argv, kwargs)) or 0
+        os.environ["BOSON_API_KEY"] = "secret-should-not-pass"
+        try:
+            self.assertEqual(manager.run_astra_project("status", "--json"), 0)
+        finally:
+            manager.subprocess.call = original
+            os.environ.pop("BOSON_API_KEY", None)
+        argv, kwargs = calls[0]
+        self.assertEqual(argv[1], "-I")
+        self.assertEqual(Path(argv[2]), manager.ROOT / "workspace-astra/bin/astra-project")
+        self.assertNotIn("BOSON_API_KEY", kwargs["env"])
+        self.assertEqual(kwargs["env"]["ASTRA_WORKSPACE_DIR"], str(self.workspace.resolve()))
+
+    def test_real_read_only_run_never_executes_the_planted_helper(self) -> None:
+        with open(os.devnull, "w") as quiet:
+            original = manager.subprocess.call
+            manager.subprocess.call = lambda argv, **kwargs: original(argv, stdout=quiet, stderr=quiet, **kwargs)
+            try:
+                manager.run_astra_project("status", "--json")
+            finally:
+                manager.subprocess.call = original
+        self.assertFalse(self.marker.exists(), "the agent-writable workspace helper must never run on the host")
+
+    def test_coding_operations_are_refused_on_the_host(self) -> None:
+        for args in (("check", "site", "--command", "id"), ("init", "site"), ("record-update", "site"),
+                     ("preview", "start", "site"), ("preview", "stop"), ("_serve", "site"), ()):
+            with self.assertRaises(RuntimeError, msg=args):
+                manager.run_astra_project(*args)

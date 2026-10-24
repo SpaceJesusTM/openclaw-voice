@@ -9,6 +9,11 @@ owner_scope: local-owner
 timezone: America/Toronto
 voice:
   boson_voice: default
+# Team mode: an utterance is for Tari when it starts with one of these words
+# (after "hey", "okay"...) or ends with one as a vocative ("..., Tari?").
+# Extra entries are likely transcriptions of the spoken name.
+addressing:
+  aliases: [tari, tarry, tary, tahri, tarri, tori, atari]
 
 openclaw:
   agent_id: tari                     # OpenClaw agent; HTTP selector openclaw/tari

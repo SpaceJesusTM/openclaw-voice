@@ -1,5 +1,8 @@
 # ClawVoice voice runtime (Priority 1)
 
+Team mode (several agents in one room, addressed by name) is described in
+[team-voice.md](team-voice.md).
+
 Talk to a real OpenClaw agent with **Boson Higgs Realtime 1.5 Preview**
 (`higgs-realtime-1.5-preview`) over **Pipecat**, in your browser, on your Mac.
 Tari is the first configured agent; nothing in the runtime is specific to Tari.

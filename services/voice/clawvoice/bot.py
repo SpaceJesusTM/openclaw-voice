@@ -7,6 +7,9 @@ Pipeline (unchanged from the validated experiment):
 Agent identity, instructions, voice and tools come from the selected agent's
 configuration. Jobs and cache are process-level (see runtime.py), so a
 disconnect ends only this voice session.
+
+A ``/start`` body with ``{"mode": "team"}`` opens a Team room instead: every
+configured agent on one connection, addressed by name (clawvoice/team).
 """
 
 from __future__ import annotations
@@ -44,6 +47,12 @@ IDLE_TIMEOUT_SECS = float(os.environ.get("CLAWVOICE_IDLE_TIMEOUT_SECS", "1800"))
 async def bot(runner_args: RunnerArguments):
     runtime = get_runtime()
     body = runner_args.body if isinstance(runner_args.body, dict) else {}
+    if body.get("mode") == "team":
+        # Team mode: every agent in one room, name-addressed (clawvoice/team).
+        from clawvoice.team.bot import team_bot
+
+        await team_bot(runner_args, runtime)
+        return
     agent_runtime = runtime.agent(body.get("agent") if isinstance(body.get("agent"), str) else None)
     agent = agent_runtime.agent
     settings = load_settings()

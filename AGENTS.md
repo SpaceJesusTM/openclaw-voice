@@ -30,9 +30,17 @@ agent-to-agent collaboration, and eventual shared human/agent rooms.
 `v0.1.0` (see `docs/GETTING_STARTED.md`, `docs/voice.md`). One real voiced agent
 (Tari) with a generic OpenClaw adapter, per-agent hot-context cache with live
 fallback, nonblocking verified jobs and spoken completions, read-only Gmail,
-unified Calendar/planner, push-to-talk and stop-speaking. **Next: Priority 2a**
-(multiple independently voiced agents, name routing, one shared floor); start
-from the baseline as described in `docs/ROADMAP_ACCEPTANCE_DEMO.md`.
+unified Calendar/planner, push-to-talk and stop-speaking.
+
+**Priority 2a** is implemented on `feat/p2a-team-voice` and awaits owner
+acceptance: Astra (isolated coding agent) and Team mode (`docs/team-voice.md`):
+name-addressed agents in one room, concurrent work, one speaking floor. Unnamed
+requests go to nobody; topic-based routing is Priority 2b.
+
+- Team mode: each agent's Higgs session receives only what was addressed to it;
+  never fan out audio, tool output or private data between agents.
+- The host runs only read-only Astra helper commands from the tracked template;
+  agent-writable workspace files are never executed on the Mac.
 
 - Agent specifics belong in `services/voice/agents/*.yaml`; the core runtime
   must not branch on agent names (a test enforces this).

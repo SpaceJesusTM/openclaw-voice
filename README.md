@@ -18,9 +18,15 @@ OpenClaw agents. Voice is powered by **Boson Higgs Realtime 1.5 Preview**
 - America/Toronto timezone handling, including DST
 - Push-to-talk, natural interruptions, and "stop talking" without resuming or replaying
 
-**Still future:** Priority 2a multiple independently voiced agents (Tari, Astra,
-Jester) with name routing and one shared floor; Priority 2b relevance routing and
-agent-to-agent collaboration; Priority 3 multiple people and cross-user permissions.
+**Priority 2a, branch `feat/p2a-team-voice` (for owner testing):** Astra, a second
+real OpenClaw agent (coding, isolated workspace and local preview), and **Team
+mode**: Tari and Astra in one voice room on one connection, addressed by name,
+working concurrently, with one shared speaking floor and queued replies and
+completion announcements. Tari-only and Astra-only modes remain.
+See [docs/team-voice.md](docs/team-voice.md).
+
+**Still future:** Jester; Priority 2b relevance routing and agent-to-agent
+collaboration; Priority 3 multiple people and cross-user permissions.
 See the [roadmap](docs/ROADMAP_ACCEPTANCE_DEMO.md).
 
 ## Talk to Tari

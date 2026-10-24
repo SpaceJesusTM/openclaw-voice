@@ -6,7 +6,7 @@ Pipecat's development runner provides the WebRTC signalling (/start,
 /sessions/{id}/api/offer) and the stock playground at /client/. ClawVoice adds:
 
     GET  /                      the ClawVoice web UI (apps/web)
-    GET  /api/agents            configured agent identities (browser-safe)
+    GET  /api/agents            configured agent identities and Team mode availability (browser-safe)
     GET  /api/state?agent=ID    gateway health, cache topics, jobs (no secrets)
     POST /api/jobs/{id}/cancel  explicit job cancellation
     POST /api/agents/{id}/gateway/reconnect   re-check the Gateway (e.g. after pairing)
@@ -32,6 +32,7 @@ from clawvoice.bot import bot  # noqa: F401 - the Pipecat runner discovers bot()
 from clawvoice.config import MODEL, load_settings
 from clawvoice.paths import WEB_ROOT, state_dir
 from clawvoice.runtime import Runtime, get_runtime, set_runtime
+from clawvoice.team.bot import team_members
 from clawvoice.voice.telemetry import configure_logging
 
 _LOOPBACK = {"127.0.0.1", "localhost", "[::1]", "::1"}
@@ -78,10 +79,13 @@ app.mount("/ui", StaticFiles(directory=str(WEB_ROOT)), name="clawvoice-ui")
 @app.get("/api/agents")
 async def agents():
     runtime = get_runtime()
+    members = team_members(runtime)
     return {
         "default": runtime.registry.default_id,
         "model": MODEL,
         "agents": [agent.agent.public_identity() for agent in runtime.agents.values()],
+        # Team mode: every agent in one room, addressed by name (POST /start body {"mode": "team"}).
+        "team": {"available": len(members) >= 2, "agents": [rt.agent.id for rt in members]},
     }
 
 

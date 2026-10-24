@@ -23,6 +23,8 @@ from clawvoice.paths import AGENTS_DIR
 _ID = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _TOPIC = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
 _COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+# A spoken name or a likely transcription of it, matched as one lowercase word.
+_ALIAS = re.compile(r"[a-z][a-z']{1,23}")
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 
@@ -89,6 +91,8 @@ class AgentConfig:
     receipt_types: dict[str, ReceiptType]
     plugins: tuple[str, ...]
     clarify_hint: str = "what exactly should change, and any date, time and title it needs"
+    # Words that address this agent in a Team room: its name plus likely transcriptions.
+    aliases: tuple[str, ...] = ()
     fixture: bool = False
     source_path: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -117,6 +121,7 @@ class AgentConfig:
             "timezone": self.timezone,
             "owner_scope": self.owner_scope,
             "topics": [{"key": t.key, "description": t.description} for t in self.topics],
+            "aliases": list(self.aliases),
             "fixture": self.fixture,
         }
 
@@ -249,10 +254,18 @@ def parse_agent(data: dict[str, Any], *, source: Path, base: Path) -> AgentConfi
     targets = tuple(str(t) for t in (delegation.get("targets") or ["other"]))
     if "other" not in targets:
         targets = (*targets, "other")
+    display_name = str(data.get("display_name") or agent_id.title())
+    aliases = [display_name.lower()]
+    for raw in (data.get("addressing") or {}).get("aliases") or []:
+        alias = str(raw).strip().lower()
+        if not _ALIAS.fullmatch(alias):
+            raise ConfigError(f"{where}: addressing alias {raw!r} must be one word (letters only)")
+        if alias not in aliases:
+            aliases.append(alias)
 
     return AgentConfig(
         id=agent_id,
-        display_name=str(data.get("display_name") or agent_id.title()),
+        display_name=display_name,
         color=str(color),
         emoji=str(data.get("emoji") or ""),
         role_markdown=role_markdown,
@@ -273,6 +286,7 @@ def parse_agent(data: dict[str, Any], *, source: Path, base: Path) -> AgentConfi
         clarify_hint=str(
             delegation.get("clarify") or "what exactly should change, and any date, time and title it needs"
         ),
+        aliases=tuple(aliases),
         fixture=bool(data.get("fixture", False)),
         source_path=str(source),
         extra=dict(data.get("extra") or {}),

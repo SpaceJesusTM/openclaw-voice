@@ -8,7 +8,11 @@ role_file: astra.md
 owner_scope: local-owner
 timezone: America/Toronto
 voice:
-  boson_voice: default
+  boson_voice: oliver              # distinct from Tari's voice in a Team room
+# Team mode: an utterance is for Astra when it starts with one of these words
+# (after "hey", "okay"...) or ends with one as a vocative ("..., Astra?").
+addressing:
+  aliases: [astra, astro, austra, astrah]
 
 openclaw:
   agent_id: astra                    # OpenClaw agent; HTTP selector openclaw/astra

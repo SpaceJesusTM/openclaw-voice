@@ -427,22 +427,39 @@ def run_compose(*args: str, agent: str = "tari") -> int:
     return subprocess.call(cmd, cwd=ROOT, env=env)
 
 
+# Read-only astra-project subcommands the host may run (ClawVoice's project cache and verifier).
+HOST_PROJECT_COMMANDS = ("status", "recent", "latest-update", "verify")
+_HOST_HELPER_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR")
+
+
 def run_astra_project(*args: str) -> int:
-    ws_root = astra_workspace_dir()
-    seeded_helper = ws_root / "bin/astra-project"
-    template_helper = ROOT / "workspace-astra/bin/astra-project"
-    helper_path = seeded_helper if seeded_helper.is_file() else template_helper
-    if not helper_path.is_file():
-        raise RuntimeError("Missing astra-project helper binary")
-    env = dict(os.environ)
-    env["ASTRA_WORKSPACE_DIR"] = str(ws_root)
+    """Run the trusted, repository-tracked astra-project helper on the host, read-only.
+
+    The workspace copy (astra-workspace/bin/astra-project) is writable from
+    Astra's container, so the host never executes it: an agent-controlled file
+    must not become trusted host code. The host runs the tracked template with
+    an isolated interpreter and a minimal environment, and only read-only
+    subcommands. Coding operations (init, check, which can run a shell command,
+    record-update, and preview start/stop, which signals a PID read from
+    agent-writable state) run only inside Astra's isolated container.
+    """
+    helper = owned_path(ROOT / "workspace-astra/bin/astra-project")
+    if not helper.is_file():
+        raise RuntimeError("Missing the trusted astra-project helper template")
+    command = args[0] if args else ""
+    if command not in HOST_PROJECT_COMMANDS and tuple(args[:2]) != ("preview", "status"):
+        raise RuntimeError(
+            f"'project {command or '(none)'}' runs only inside Astra's isolated container; on the host use "
+            + ", ".join(HOST_PROJECT_COMMANDS) + " or 'preview status'."
+        )
+    env = {key: os.environ[key] for key in _HOST_HELPER_ENV if key in os.environ}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["ASTRA_WORKSPACE_DIR"] = str(astra_workspace_dir())
     try:
-        data = load_env("astra")
-        if "ASTRA_PREVIEW_PORT" in data:
-            env["ASTRA_PREVIEW_PORT"] = data["ASTRA_PREVIEW_PORT"]
+        env["ASTRA_PREVIEW_PORT"] = load_env("astra").get("ASTRA_PREVIEW_PORT", str(ASTRA_DEFAULT_PREVIEW_PORT))
     except RuntimeError:
-        env.setdefault("ASTRA_PREVIEW_PORT", str(ASTRA_DEFAULT_PREVIEW_PORT))
-    return subprocess.call([sys.executable, str(helper_path), *args], env=env)
+        env["ASTRA_PREVIEW_PORT"] = str(ASTRA_DEFAULT_PREVIEW_PORT)
+    return subprocess.call([sys.executable, "-I", str(helper), *args], env=env, cwd=str(ROOT))
 
 
 def check_gateway(agent: str = "tari") -> None:

@@ -1,6 +1,6 @@
 # ClawVoice — Claude project entry point
 
-> **Priority 1 is complete (baseline `release/p1-stable`, tag `v0.1.0`); next is Priority 2a.** These documents preserve the full product vision and architecture intent. They are not evidence that future features exist. Treat the latest checked-out code, tests, and explicit owner request as authoritative for implementation status.
+> **Priority 1 is complete (baseline `release/p1-stable`, tag `v0.1.0`). Priority 2a (Astra + Team mode) is implemented on `feat/p2a-team-voice`, pending owner acceptance.** These documents preserve the full product vision and architecture intent. They are not evidence that future features exist. Treat the latest checked-out code, tests, and explicit owner request as authoritative for implementation status.
 
 ## Read these in order
 
@@ -28,6 +28,7 @@ These docs are **durable product and architecture intent**, not permission to im
 - `tari-read`: Gmail and Calendar read-only OAuth; `tari-calendar-write`: independent Calendar management OAuth. Real reads and CLI create/update/read-back/delete passed; agent-led Calendar creation was exercised too. Gmail **must remain read-only**.
 - The real Tari Public day planner has been ported and committed: `docs/planner.md`, `infra/openclaw/workspace/bin/day-planner`, and `infra/openclaw/workspace/skills/tari-day-planner/SKILL.md`. Its audit reports **78 offline tests passing**, live persistence across Docker restart, and agent-invoked planner reads/writes. Since `5a78c91` new timed planner entries are Calendar events (one schedule); legacy local blocks and the checklist stay local. Use `manage.py update-workspace` to bring the demo workspace to the committed templates; remote audit is not proof of the current local checkout.
 - The Pipecat/Boson experiment in `experiments/pipecat-higgs-1.5/` completed actual realtime preview, speech/audio, interruption, native tool, and mock worker tests. Inspect its documented compatibility fixes. Working reference pins: `pipecat-ai==1.12.0`, `pipecat-boson==0.1.4`, Python 3.11. The exact Higgs model is **`higgs-realtime-1.5-preview`**, not legacy `higgs-realtime`.
+- **Priority 2a status:** implemented on `feat/p2a-team-voice` (from `feat/astra-coding-agent` `b526b53`), pending owner acceptance: Astra plus Team mode (`docs/team-voice.md`, `services/voice/clawvoice/team/`). Not merged into `main` or `release/p1-stable`.
 - **Priority 1 status:** complete in `services/voice/` (runtime) and `apps/web/` (UI); start with `docs/GETTING_STARTED.md`, reference `docs/voice.md`, evidence `docs/voice-validation.md` (plus `voice-p1-fixes.md`, `voice-gmail-latest.md`). Tari runs over the Gateway HTTP transport until the owner approves the WebSocket device pairing.
 - **Timezone result:** Codex inspected the live smoke-test event: API stored 19:00Z for the requested 3 PM Toronto, correctly equivalent to `2026-10-26T15:00:00-04:00`. The 7 PM UI display is consistent with UTC display settings, **not** an event-writing bug. Preserve IANA `America/Toronto` conversions and validate future recurring/DST writes.
 

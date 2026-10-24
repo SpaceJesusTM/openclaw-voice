@@ -47,3 +47,10 @@ python3 infra/openclaw/manage.py --agent astra start
 python3 infra/openclaw/manage.py --agent astra doctor
 python3 infra/openclaw/manage.py --agent astra openclaw models auth login --provider openai --device-code --agent astra
 ```
+
+On the host, `manage.py --agent astra project ...` runs only the read-only helper
+commands ClawVoice needs (`status`, `recent`, `latest-update`, `verify`,
+`preview status`), from the tracked template `workspace-astra/bin/astra-project`
+with an isolated interpreter and a minimal environment. It never executes the
+workspace copy (writable by Astra) and refuses `init`, `check`, `record-update`
+and `preview start/stop`, which run only inside Astra's container.

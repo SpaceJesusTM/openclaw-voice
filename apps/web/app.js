@@ -28,7 +28,17 @@ const ui = {
   levelTimer: null,
   remoteAnalyser: null,
   localAnalyser: null,
+  // Team mode: every agent in one room, addressed by name.
+  mode: "single",
+  team: null,
+  teamAgents: new Map(),
+  teamFloor: null,
+  replies: new Map(),
 };
+
+const TEAM = "team";
+const isTeam = () => ui.mode === TEAM;
+const teamAgent = (id) => ui.teamAgents.get(id) || { id, display_name: id || "Agent", color: "#64748b", emoji: "" };
 
 // ------------------------------------------------------------------ helpers
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
@@ -89,9 +99,19 @@ function renderAgentSelector() {
     return;
   }
   bar.hidden = false;
-  bar.innerHTML = agents
+  const teamTab = ui.team?.available
+    ? `<button type="button" id="select-agent-team" class="agent-tab team-tab${isTeam() ? " active" : ""}"
+        role="tab" aria-selected="${isTeam()}" data-agent="${TEAM}" style="--agent-color: #3b82f6">
+        <span class="agent-dot" aria-hidden="true"></span>
+        <span class="agent-tab-text">
+          <span class="agent-tab-name">Team</span>
+          <span class="agent-tab-role">${esc([...ui.teamAgents.values()].map((a) => a.display_name).join(" + "))}, by name</span>
+        </span>
+      </button>`
+    : "";
+  bar.innerHTML = teamTab + agents
     .map((a) => {
-      const selected = a.id === ui.agent?.id;
+      const selected = !isTeam() && a.id === ui.agent?.id;
       const color = esc(a.color || "#22c55e");
       return `<button type="button" id="select-agent-${esc(a.id)}" class="agent-tab${selected ? " active" : ""}"
         role="tab" aria-selected="${selected}" data-agent="${esc(a.id)}" style="--agent-color: ${color}">
@@ -108,6 +128,11 @@ function renderAgentSelector() {
 function resetConversationForAgent(agent) {
   const box = $("transcript");
   if (!box) return;
+  ui.replies = new Map();
+  if (isTeam()) {
+    box.innerHTML = `<p class="hint">Press <strong>Connect</strong> once and address an agent by name: “Hey Tari, what's on my planner today?” or “Okay Astra, what's the latest website update?” Requests without a name go to nobody. Use headphones to avoid echo.</p>`;
+    return;
+  }
   const example = agent?.id === "astra"
     ? "create a simple website for a fictional coffee shop."
     : "What's on my planner today?";
@@ -115,8 +140,11 @@ function resetConversationForAgent(agent) {
 }
 
 async function selectAgent(agentId) {
-  const next = (ui.agents || []).find((a) => a.id === agentId);
-  if (!next || ui.agent?.id === next.id) return;
+  const team = agentId === TEAM;
+  if (team && !ui.team?.available) return;
+  const next = team ? ui.agent : (ui.agents || []).find((a) => a.id === agentId);
+  if (!next) return;
+  if (team ? isTeam() : !isTeam() && ui.agent?.id === next.id) return;
   const wasActive = ui.connected || ui.connecting;
   if (wasActive) {
     sendRtvi("disconnect-bot", {});
@@ -127,6 +155,7 @@ async function selectAgent(agentId) {
   }
   teardown();
   banner(null);
+  ui.mode = team ? TEAM : "single";
   ui.agent = next;
   ui.jobs = new Map();
   ui.noticed = new Set();
@@ -135,7 +164,7 @@ async function selectAgent(agentId) {
   ui.lastPoll = 0;
   if (typeof history !== "undefined" && history.replaceState) {
     const url = new URL(location.href);
-    url.searchParams.set("agent", next.id);
+    url.searchParams.set("agent", team ? TEAM : next.id);
     history.replaceState(null, "", url.toString());
   }
   renderAgentSelector();
@@ -143,6 +172,7 @@ async function selectAgent(agentId) {
   resetConversationForAgent(next);
   renderJobs();
   renderTopics({ topics: [], metrics: {} });
+  renderSeats();
   await refreshState(true);
   if (wasActive) {
     await connect();
@@ -153,11 +183,15 @@ async function init() {
   try {
     const data = await (await fetch("/api/agents")).json();
     ui.agents = data.agents || [];
+    ui.team = data.team || null;
+    ui.teamAgents = new Map(ui.agents.filter((a) => ui.team?.agents?.includes(a.id)).map((a) => [a.id, a]));
     const wanted = new URLSearchParams(location.search).get("agent");
+    if (wanted === TEAM && ui.team?.available) ui.mode = TEAM;
     ui.agent = ui.agents.find((a) => a.id === wanted) || ui.agents.find((a) => a.id === data.default) || ui.agents[0];
     renderAgentSelector();
     renderIdentity();
     resetConversationForAgent(ui.agent);
+    renderSeats();
     await refreshState(true);
   } catch (error) {
     banner("ClawVoice server is not reachable. Start it with `make dev` in services/voice.");
@@ -169,6 +203,20 @@ async function init() {
 function renderIdentity() {
   const a = ui.agent;
   if (!a) return;
+  const team = isTeam();
+  $("orb").hidden = team;
+  $("agent-state").hidden = team;
+  $("team-seats").hidden = !team;
+  $("team-queue").hidden = !team;
+  if (team) {
+    const names = [...ui.teamAgents.values()].map((x) => x.display_name);
+    document.title = "ClawVoice · Team";
+    $("agent-name").textContent = "Team";
+    $("agent-role").textContent = `${names.join(" and ")} in one room. Start with a name: “Hey ${names[0]}…”, “Okay ${names[1] || names[0]}…”.`;
+    document.documentElement.style.setProperty("--accent", a.color);
+    document.documentElement.style.setProperty("--accent-soft", hexToSoft(a.color, 0.22));
+    return;
+  }
   document.title = `ClawVoice · ${a.display_name}`;
   $("agent-name").textContent = `${a.display_name} ${a.emoji || ""}`.trim();
   $("agent-role").textContent = a.role || "";
@@ -180,6 +228,18 @@ async function refreshState(force = false) {
   if (!ui.agent) return;
   // While connected, live updates arrive over RTVI; poll only as a slow backstop.
   if (!force && ui.connected && Date.now() - (ui.lastPoll || 0) < 15000) return;
+  if (isTeam()) {
+    ui.lastPoll = Date.now();
+    try {
+      const ids = ui.team?.agents || [];
+      const states = await Promise.all(ids.map(async (id) => {
+        const response = await fetch(`/api/state?agent=${encodeURIComponent(id)}`);
+        return response.ok ? [id, await response.json()] : null;
+      }));
+      if (isTeam()) applyTeamStates(Object.fromEntries(states.filter(Boolean)));
+    } catch { /* server restarting; next poll will retry */ }
+    return;
+  }
   const requestedAgentId = ui.agent.id;
   ui.lastPoll = Date.now();
   try {
@@ -201,6 +261,29 @@ function applyState(state) {
     ui.lastMetrics = state.cache.metrics;
     renderTopics(state.cache);
   }
+}
+
+function applyTeamStates(states) {
+  if (!states || !isTeam()) return;
+  ui.jobs = new Map();
+  ui.topicRows = new Map();
+  const gateways = [];
+  for (const [id, state] of Object.entries(states)) {
+    for (const job of state.jobs || []) ui.jobs.set(`${id}:${job.job_id}`, { ...job, agent_id: job.agent_id || id });
+    for (const row of state.cache?.topics || []) ui.topicRows.set(`${id}:${row.topic}`, { ...row, agent: id });
+    gateways.push([id, state.gateway]);
+  }
+  renderTeamGateways(gateways);
+  renderJobs();
+  renderTopics({ topics: [...ui.topicRows.values()], metrics: {} });
+}
+
+function renderTeamGateways(gateways) {
+  const badge = $("gateway-badge");
+  const parts = gateways.map(([id, g]) => `${teamAgent(id).display_name} ${g?.active_transport === "ws" ? "WebSocket" : g?.active_transport === "http" ? "HTTP" : "unavailable"}`);
+  const ok = gateways.every(([, g]) => g && (g.active_transport === "ws" || g.active_transport === "http"));
+  badge.textContent = `Gateways · ${parts.join(" · ")}`;
+  badge.className = `badge ${ok ? "ok" : "bad"}`;
 }
 
 function renderGateway(gateway) {
@@ -240,6 +323,7 @@ function renderJobs() {
     list.innerHTML = '<li class="empty">No tasks yet.</li>';
     return;
   }
+  const team = isTeam();
   list.innerHTML = jobs
     .map((job) => {
       const verified = job.verification === "verified" ? " · ✓ verified" : job.verification === "mismatch" ? " · ⚠ mismatch" : "";
@@ -248,12 +332,14 @@ function renderJobs() {
       if (job.timings?.run_ms != null) timing.push(`run ${(job.timings.run_ms / 1000).toFixed(1)} s`);
       if (job.timings?.announce_delay_ms != null) timing.push(`announced +${(job.timings.announce_delay_ms / 1000).toFixed(1)} s`);
       const cancel = ACTIVE.has(job.status) && !job.cancel_requested
-        ? `<button class="link" data-cancel="${esc(job.job_id)}">Cancel</button>` : "";
+        ? `<button class="link" data-cancel="${esc(job.job_id)}" data-agent="${esc(job.agent_id || ui.agent?.id || "")}">Cancel</button>` : "";
+      const owner = team ? teamAgent(job.agent_id) : null;
+      const ownerChip = owner ? `<span class="owner" style="--owner-color: ${esc(owner.color)}">${esc(owner.display_name)}</span>` : "";
       return `<li class="job">
         <div class="job-top"><span class="job-title">${esc(job.title)}</span>
           <span class="chip ${esc(job.status)}">${esc(job.status)}${esc(verified)}</span></div>
         ${job.outcome_text ? `<div class="job-outcome">${esc(job.outcome_text)}</div>` : ""}
-        <div class="job-meta"><span>${esc(job.job_id)}</span><span>${esc(job.age)}</span>
+        <div class="job-meta">${ownerChip}<span>${esc(job.job_id)}</span><span>${esc(job.age)}</span>
           ${job.transport ? `<span>${esc(job.transport)}</span>` : ""}${timing.map((t) => `<span>${esc(t)}</span>`).join("")}
           ${job.announcement && job.announcement !== "none" ? `<span>announce: ${esc(job.announcement)}</span>` : ""}${cancel}</div>
       </li>`;
@@ -264,24 +350,30 @@ function renderJobs() {
 $("jobs").addEventListener("click", async (event) => {
   const id = event.target?.dataset?.cancel;
   if (!id) return;
+  const agent = event.target.dataset.agent || ui.agent.id;
   event.target.disabled = true;
   if (ui.connected && ui.dc?.readyState === "open") {
-    sendRtvi("client-message", { t: "clawvoice.cancel", d: { job_id: id } });
+    sendRtvi("client-message", { t: "clawvoice.cancel", d: { job_id: id, agent } });
   } else {
-    try { await postJSON(`/api/jobs/${encodeURIComponent(id)}/cancel?agent=${encodeURIComponent(ui.agent.id)}`); }
+    try { await postJSON(`/api/jobs/${encodeURIComponent(id)}/cancel?agent=${encodeURIComponent(agent)}`); }
     catch (error) { banner(`Cancel failed: ${error.message}`); }
     refreshState();
   }
 });
 
 function upsertJob(job, event) {
-  if (!job || (job.agent_id && ui.agent?.id && job.agent_id !== ui.agent.id)) return;
-  ui.jobs.set(job.job_id, job);
+  if (!job) return;
+  if (isTeam()) {
+    if (job.agent_id && !ui.teamAgents.has(job.agent_id)) return;
+  } else if (job.agent_id && ui.agent?.id && job.agent_id !== ui.agent.id) return;
+  const key = isTeam() ? `${job.agent_id}:${job.job_id}` : job.job_id;
+  ui.jobs.set(key, job);
   renderJobs();
-  if (event === "job.finished" && !ui.noticed.has(job.job_id)) {
-    ui.noticed.add(job.job_id);
+  if (event === "job.finished" && !ui.noticed.has(key)) {
+    ui.noticed.add(key);
     const icon = job.status === "completed" ? (job.verification === "verified" ? "✓" : "•") : job.status === "cancelled" ? "⨯" : "⚠";
-    addTurn("notice", `${icon} ${ui.agent.display_name} task finished (${job.status}${job.verification ? `, ${job.verification}` : ""}): ${job.outcome_text}`);
+    const name = isTeam() ? teamAgent(job.agent_id).display_name : ui.agent.display_name;
+    addTurn("notice", `${icon} ${name} task finished (${job.status}${job.verification ? `, ${job.verification}` : ""}): ${job.outcome_text}`);
   }
 }
 
@@ -296,8 +388,9 @@ function renderTopics(cache) {
     .map((row) => {
       const age = row.age_seconds == null ? "—" : row.age_seconds < 90 ? `${row.age_seconds}s` : `${Math.round(row.age_seconds / 60)}m`;
       const note = row.last_error ? `error: ${row.last_error}` : row.invalidated ? `refreshing after ${row.invalidated}` : row.complete === false ? "incomplete source data" : "";
+      const key = row.agent ? `${teamAgent(row.agent).display_name} · ${row.topic}` : row.topic;
       return `<li class="topic" title="${esc(row.summary || "")}">
-        <span class="topic-key">${esc(row.topic)}</span>
+        <span class="topic-key">${esc(key)}</span>
         <span class="topic-state ${esc(row.state)}">${esc(row.state)}${row.refreshing ? " ↻" : ""} · ${esc(age)}</span>
         ${note ? `<span class="topic-note">${esc(note)}</span>` : ""}
       </li>`;
@@ -305,20 +398,22 @@ function renderTopics(cache) {
     .join("") || '<li class="empty">No topics configured.</li>';
 }
 
-function updateTopic(row) {
+function updateTopic(row, agent) {
   if (!row) return;
   ui.topicRows = ui.topicRows || new Map();
-  ui.topicRows.set(row.topic, row);
+  if (isTeam() && agent) ui.topicRows.set(`${agent}:${row.topic}`, { ...row, agent });
+  else if (!isTeam()) ui.topicRows.set(row.topic, row);
   renderTopics({ topics: [...ui.topicRows.values()], metrics: ui.lastMetrics || {} });
 }
 
 // ------------------------------------------------------------------ transcript
-function addTurn(kind, text, { interim = false } = {}) {
+function addTurn(kind, text, { interim = false, speaker = null } = {}) {
   const box = $("transcript");
   box.querySelector(".hint")?.remove();
   const el = document.createElement("div");
   el.className = `turn ${kind}${interim ? " interim" : ""}`;
-  const who = kind === "user" ? "You" : kind === "bot" ? ui.agent?.display_name || "Agent" : "ClawVoice";
+  if (speaker?.color) el.style.setProperty("--who-color", speaker.color);
+  const who = kind === "user" ? "You" : kind === "bot" ? speaker?.display_name || ui.agent?.display_name || "Agent" : "ClawVoice";
   el.innerHTML = `<span class="who">${esc(who)}</span><span class="text"></span>`;
   el.querySelector(".text").textContent = text;
   box.append(el);
@@ -333,6 +428,7 @@ function setTurnText(el, text) {
 
 // ------------------------------------------------------------------ orb
 function setOrb() {
+  if (isTeam()) { renderSeats(); return; }
   const orb = $("orb");
   const working = [...ui.jobs.values()].some((j) => ACTIVE.has(j.status));
   let state = "offline";
@@ -423,7 +519,7 @@ async function connect() {
     ui.stream = $("typed-only").checked ? silentStream() : await getMicrophone();
     applyMicGate(false);
     ui.localAnalyser = $("typed-only").checked ? null : analyserFor(ui.stream);
-    const start = await postJSON("/start", { transport: "webrtc", body: { agent: ui.agent.id } });
+    const start = await postJSON("/start", { transport: "webrtc", body: isTeam() ? { mode: TEAM } : { agent: ui.agent.id } });
     const pc = new RTCPeerConnection({ iceServers: start.iceConfig?.iceServers || [] });
     ui.pc = pc;
     pc.addTransceiver(ui.stream.getAudioTracks()[0], { direction: "sendrecv", streams: [ui.stream] });
@@ -499,7 +595,7 @@ function teardown() {
   ui.stream?.getTracks().forEach((t) => t.stop());
   $("bot-audio").srcObject = null;
   Object.assign(ui, { dc: null, pc: null, stream: null, connected: false, connecting: false, botTurn: null,
-    userInterim: null, botSpeaking: false, userSpeaking: false, pendingNotices: 0 });
+    userInterim: null, botSpeaking: false, userSpeaking: false, pendingNotices: 0, teamFloor: null });
   $("model-badge").textContent = `${MODEL} · not connected`;
   $("model-badge").className = "badge";
   setButtons();
@@ -553,6 +649,7 @@ function onRtvi(raw) {
       ui.botTurn = null;
       break;
     case "bot-interrupted": {
+      if (isTeam()) { ui.botSpeaking = false; break; }
       const bubbles = document.querySelectorAll(".turn.bot");
       bubbles[bubbles.length - 1]?.classList.add("interrupted");
       ui.botTurn = null; ui.botSpeaking = false; setOrb();
@@ -607,21 +704,52 @@ function onServerMessage(data) {
       break;
     }
     case "clawvoice.hello":
-      applyState(data.state);
+      if (data.team) applyTeamStates(data.states);
+      else applyState(data.state);
       break;
     case "clawvoice.state":
       applyState(data.state);
+      break;
+    case "clawvoice.team.ready":
+      for (const a of data.agents || []) ui.teamAgents.set(a.id, { ...teamAgent(a.id), ...a });
+      logLine("events", `team ready: ${(data.agents || []).map((a) => `${a.display_name} (${a.voice})`).join(", ")}`);
+      renderSeats();
+      break;
+    case "clawvoice.team.floor":
+      ui.teamFloor = data;
+      renderSeats();
+      break;
+    case "clawvoice.team.reply":
+      onTeamReply(data);
+      break;
+    case "clawvoice.team.user":
+      onTeamUser(data);
+      break;
+    case "clawvoice.team.hearing":
+      ui.userSpeaking = !!data.on;
+      renderSeats();
+      break;
+    case "clawvoice.team.status":
+      if (data.text) logLine("events", data.text);
+      break;
+    case "clawvoice.team.error":
+      banner(data.message || "Team room problem", data.fatal ? "error" : "info");
+      logLine("events", `team error: ${data.message}`);
+      break;
+    case "clawvoice.stop":
+      logLine("events", `stop speaking${data.agent ? ` (${teamAgent(data.agent).display_name})` : ""}; background tasks keep running`);
       break;
     case "clawvoice.job":
       upsertJob(data.job, data.event);
       break;
     case "clawvoice.cache":
-      updateTopic(data.row);
+      updateTopic(data.row, data.agent);
       break;
     case "clawvoice.tool": {
       const extra = [data.cache && `cache ${data.cache}`, data.status, data.age_seconds != null && `age ${data.age_seconds}s`, data.read_ms != null && `read ${data.read_ms} ms`, data.job_id]
         .filter(Boolean).join(" · ");
-      logLine("tools", `${data.phase === "started" ? "▶" : "■"} ${data.name}${data.ms != null ? ` ${data.ms} ms` : ""}${extra ? ` (${extra})` : ""}`);
+      const owner = data.agent ? `${teamAgent(data.agent).display_name}: ` : "";
+      logLine("tools", `${data.phase === "started" ? "▶" : "■"} ${owner}${data.name}${data.ms != null ? ` ${data.ms} ms` : ""}${extra ? ` (${extra})` : ""}`);
       break;
     }
     case "clawvoice.latency":
@@ -638,6 +766,109 @@ function onServerMessage(data) {
     default:
       break;
   }
+}
+
+// ------------------------------------------------------------------ team mode
+const SEAT_LABEL = {
+  speaking: "Speaking",
+  waiting: "Waiting to speak",
+  thinking: "Thinking…",
+  listening: "Listening…",
+  idle: "Ready",
+};
+
+function ensureSeats() {
+  const box = $("team-seats");
+  const ids = ui.team?.agents || [];
+  if (box.dataset.agents === ids.join(",")) return;
+  box.dataset.agents = ids.join(",");
+  box.innerHTML = ids.map((id) => {
+    const a = teamAgent(id);
+    return `<div class="seat state-offline" data-agent="${esc(id)}" style="--seat-color: ${esc(a.color)}; --seat-soft: ${hexToSoft(a.color, 0.22)}">
+      <div class="orb state-offline" aria-hidden="true"><div class="orb-core"></div><div class="orb-ring"></div><div class="orb-work"></div></div>
+      <div class="seat-name">${esc(`${a.display_name} ${a.emoji || ""}`.trim())}</div>
+      <div class="seat-state"></div>
+      <div class="seat-chips"></div>
+    </div>`;
+  }).join("");
+}
+
+function renderSeats() {
+  if (!isTeam()) return;
+  ensureSeats();
+  const floor = ui.teamFloor || {};
+  const states = floor.agents || {};
+  for (const seat of $("team-seats").querySelectorAll(".seat")) {
+    const id = seat.dataset.agent;
+    const s = states[id] || {};
+    const jobsActive = [...ui.jobs.values()].filter((j) => j.agent_id === id && ACTIVE.has(j.status)).length;
+    const working = Math.max(jobsActive, s.working || 0);
+    const state = ui.connected ? (s.state || "idle") : "offline";
+    const orbState = state === "waiting" ? "idle" : state;
+    seat.className = `seat state-${state}${s.addressed && ui.connected ? " addressed" : ""}${ui.connected && s.online === false ? " offline" : ""}`;
+    seat.querySelector(".orb").className =
+      `orb state-${orbState}${working ? " working" : ""}${state === "waiting" || s.notices ? " waiting" : ""}`;
+    seat.querySelector(".seat-state").textContent = ui.connected
+      ? SEAT_LABEL[state] || state
+      : ui.connecting ? "Connecting…" : "Not connected";
+    const chips = [];
+    if (working) chips.push(`<span class="chip running">${working} task${working > 1 ? "s" : ""} running</span>`);
+    if (s.notices) chips.push('<span class="chip queued">update waiting</span>');
+    if (s.silenced) chips.push('<span class="chip">quiet after stop</span>');
+    if (ui.connected && s.online === false) chips.push('<span class="chip failed">voice offline</span>');
+    seat.querySelector(".seat-chips").innerHTML = chips.join("");
+  }
+  const queue = (floor.queue || []).map((q) => `${teamAgent(q.agent).display_name}'s ${q.kind === "notice" ? "update" : "reply"}`);
+  const line = !ui.connected ? "" : floor.user_speaking || ui.userSpeaking ? "You're speaking…"
+    : queue.length ? `Waiting for the floor: ${queue.join(", ")}` : "";
+  $("team-queue").textContent = line;
+  const working = [...ui.jobs.values()].filter((j) => ACTIVE.has(j.status)).length;
+  $("jobs-count").textContent = ui.jobs.size ? `${working} active` : "";
+}
+
+function onTeamReply(d) {
+  const speaker = teamAgent(d.agent);
+  let el = ui.replies.get(d.reply);
+  if (d.phase === "thinking") return;
+  if (d.phase === "speaking") {
+    if (!el) {
+      el = addTurn("bot", d.text || "…", { speaker });
+      if (d.reply_kind === "notice") el.classList.add("task-update");
+      ui.replies.set(d.reply, el);
+    } else if (d.text) setTurnText(el, d.text);
+  } else if (d.phase === "done" || d.phase === "cut") {
+    if (!el && d.text) {
+      el = addTurn("bot", d.text, { speaker });
+      if (d.reply_kind === "notice") el.classList.add("task-update");
+      ui.replies.set(d.reply, el);
+    } else if (el && d.text) setTurnText(el, d.text);
+    if (el && d.phase === "cut") el.classList.add("interrupted");
+  } else if (d.phase === "dropped" && el) {
+    el.classList.add("dropped");
+  }
+  if (d.phase === "dropped") logLine("events", `${speaker.display_name}'s ${d.reply_kind} not played (${d.outcome})`);
+}
+
+function onTeamUser(d) {
+  if (d.status === "unclear") { logLine("events", "didn't catch that"); return; }
+  if (!d.text) return;
+  const el = addTurn("user", d.text);
+  const agent = d.agent ? teamAgent(d.agent) : null;
+  const route = document.createElement("span");
+  route.className = "route";
+  if (d.status === "routed" || d.status === "listening") {
+    route.classList.add("to");
+    route.style.setProperty("--route-color", agent.color);
+    route.textContent = d.status === "listening" ? `→ ${agent.display_name} (listening…)`
+      : `→ ${agent.display_name}${d.how === "continuation" ? " (continued)" : d.how === "follow-up" ? " (follow-up)" : ""}${d.typed ? " · typed" : ""}`;
+  } else if (d.status === "stop") {
+    route.textContent = agent ? `stop ${agent.display_name}` : "stop (everyone)";
+  } else {
+    el.classList.add("unaddressed");
+    const names = [...ui.teamAgents.values()].map((a) => a.display_name).join(" or ");
+    route.textContent = `not addressed — start with ${names}`;
+  }
+  el.querySelector(".who").append(route);
 }
 
 // ------------------------------------------------------------------ wiring
@@ -691,6 +922,11 @@ $("composer").addEventListener("submit", (event) => {
   event.preventDefault();
   const text = $("message").value.trim();
   if (!text || !ui.connected) return;
+  if (isTeam()) {
+    // Routed by name on the server, like speech; the routed turn comes back as clawvoice.team.user.
+    if (sendRtvi("client-message", { t: "clawvoice.say", d: { text } })) $("message").value = "";
+    return;
+  }
   if (sendRtvi("send-text", { content: text, options: { audio_response: true, run_immediately: true } })) {
     addTurn("user", text);
     $("message").value = "";
