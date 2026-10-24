@@ -2,7 +2,7 @@
 """Owner-side manager for the isolated ClawVoice OpenClaw demo runtime.
 
 Never reads ~/.openclaw, ~/.config/gogcli, production Tari, or any other checkout.
-Run: python3 infra/openclaw/manage.py init|install-planner|planner|start|stop|status|logs|doctor|openclaw|gog|google|chat
+Run: python3 infra/openclaw/manage.py [--agent tari|astra] init|install-planner|planner|project|start|stop|status|logs|doctor|openclaw|gog|google|chat
 """
 from __future__ import annotations
 
@@ -21,8 +21,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ROOT = Path(__file__).resolve().parent
 LOCAL = ROOT / ".local"
+ASTRA_LOCAL = ROOT / ".local-astra"
+ASTRA_WORKSPACE = ROOT.parent.parent / "astra-workspace"
 DEFAULT_MODEL = "openai/gpt-6.1-sol"
 DEFAULT_PORT = 18939
+ASTRA_DEFAULT_PORT = 18949
+ASTRA_DEFAULT_PREVIEW_PORT = 18950
 PLANNER_SECTION = "## Local day planner and checklist"
 
 
@@ -39,6 +43,38 @@ def owned_path(path: Path) -> Path:
     return path
 
 
+def owned_workspace_path(path: Path, workspace_root: Path | None = None) -> Path:
+    """Refuse symlinks or escapes outside the dedicated Astra workspace root."""
+    ws_root = Path(workspace_root or ASTRA_WORKSPACE)
+    repo_root = ROOT.parent.parent if ws_root.is_relative_to(ROOT.parent.parent) else ws_root.parent
+    path = Path(path)
+    if not path.is_relative_to(repo_root) or ".." in path.relative_to(repo_root).parts:
+        raise RuntimeError("Refusing workspace path outside this ClawVoice checkout")
+    if not (path == ws_root or path.is_relative_to(ws_root)):
+        raise RuntimeError("Refusing path outside dedicated Astra workspace")
+    current = repo_root
+    for part in path.relative_to(repo_root).parts:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError("Refusing symlink in Astra workspace path")
+    return path
+
+
+def local_dir_for(agent: str = "tari") -> Path:
+    if agent == "astra":
+        return ASTRA_LOCAL if ASTRA_LOCAL.is_relative_to(ROOT) else (ROOT / ".local-astra")
+    return LOCAL
+
+
+def astra_workspace_dir() -> Path:
+    override = os.environ.get("ASTRA_WORKSPACE_DIR")
+    if override:
+        return Path(override).resolve()
+    if ASTRA_WORKSPACE.parent == ROOT.parent.parent:
+        return ASTRA_WORKSPACE
+    return ROOT / "astra-workspace"
+
+
 def private_dir(path: Path) -> None:
     path = owned_path(path)
     current = ROOT
@@ -46,6 +82,16 @@ def private_dir(path: Path) -> None:
         current = current / part
         current.mkdir(exist_ok=True, mode=0o700)
         current.chmod(0o700)
+
+
+def workspace_dir_create(path: Path, workspace_root: Path) -> None:
+    path = owned_workspace_path(path, workspace_root)
+    ws_root = owned_workspace_path(workspace_root, workspace_root)
+    ws_root.mkdir(parents=True, exist_ok=True)
+    current = ws_root
+    for part in path.relative_to(ws_root).parts:
+        current = current / part
+        current.mkdir(exist_ok=True, mode=0o755)
 
 
 def write_if_absent(path: Path, data: str, mode: int = 0o600) -> None:
@@ -61,8 +107,25 @@ def write_if_absent(path: Path, data: str, mode: int = 0o600) -> None:
         handle.write(data)
 
 
-def load_env() -> dict[str, str]:
-    path = owned_path(LOCAL / "runtime.env")
+def write_workspace_file_if_absent(
+    path: Path, data: str, workspace_root: Path, mode: int = 0o644
+) -> bool:
+    path = owned_workspace_path(path, workspace_root)
+    workspace_dir_create(path.parent, workspace_root)
+    if path.exists():
+        if not path.is_file():
+            raise RuntimeError("Expected an ordinary workspace file")
+        path.chmod(mode)
+        return False
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, mode)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(data)
+    return True
+
+
+def load_env(agent: str = "tari") -> dict[str, str]:
+    loc = local_dir_for(agent)
+    path = owned_path(loc / "runtime.env")
     if not path.is_file():
         raise RuntimeError("Missing local configuration. Run 'init' first.")
     data: dict[str, str] = {}
@@ -75,18 +138,27 @@ def load_env() -> dict[str, str]:
         if any(c in value for c in "\r\n\x00$'\""):
             raise RuntimeError("Use unquoted KEY=value syntax in runtime.env")
         data[key] = value
-    if not re.fullmatch(r"clawvoice-[a-f0-9]{12}", data.get("COMPOSE_PROJECT_NAME", "")):
+    prefix = r"clawvoice-astra-[a-f0-9]{12}" if agent == "astra" else r"clawvoice-[a-f0-9]{12}"
+    if not re.fullmatch(prefix, data.get("COMPOSE_PROJECT_NAME", "")):
         raise RuntimeError("Invalid installation-specific Compose project name")
-    port = int(data.get("CLAWVOICE_OPENCLAW_PORT", DEFAULT_PORT))
+    default_port = ASTRA_DEFAULT_PORT if agent == "astra" else DEFAULT_PORT
+    port = int(data.get("CLAWVOICE_OPENCLAW_PORT", default_port))
     if port < 1024 or port > 65535:
         raise RuntimeError("Invalid local Gateway port")
-    for key in ("OPENCLAW_GATEWAY_TOKEN", "GOG_KEYRING_PASSWORD"):
+    required_keys = ("OPENCLAW_GATEWAY_TOKEN",) if agent == "astra" else ("OPENCLAW_GATEWAY_TOKEN", "GOG_KEYRING_PASSWORD")
+    for key in required_keys:
         if not re.fullmatch(r"[a-f0-9]{64}", data.get(key, "")):
             raise RuntimeError("Missing or invalid generated private credential")
     return data
 
 
-def initialize(timezone: str, name: str, port: int) -> None:
+def initialize(
+    timezone: str,
+    name: str,
+    port: int,
+    agent: str = "tari",
+    preview_port: int = ASTRA_DEFAULT_PREVIEW_PORT,
+) -> None:
     if os.getuid() == 0:
         raise RuntimeError("Run init as your normal non-root Docker user")
     try:
@@ -97,6 +169,63 @@ def initialize(timezone: str, name: str, port: int) -> None:
         raise RuntimeError("Name must use simple characters")
     if not (1024 <= port <= 65535):
         raise RuntimeError("Port must be 1024-65535")
+
+    if agent == "astra":
+        if not (1024 <= preview_port <= 65535) or preview_port == port:
+            raise RuntimeError("Preview port must be 1024-65535 and distinct from Gateway port")
+        loc = local_dir_for("astra")
+        for rel in ("", "state"):
+            private_dir(loc / rel)
+        values = {
+            "COMPOSE_PROJECT_NAME": "clawvoice-astra-" + secrets.token_hex(6),
+            "CLAWVOICE_UID": str(os.getuid()),
+            "CLAWVOICE_GID": str(os.getgid()),
+            "CLAWVOICE_OPENCLAW_PORT": str(port),
+            "ASTRA_PREVIEW_PORT": str(preview_port),
+            "CLAWVOICE_NAME": name,
+            "CLAWVOICE_TIMEZONE": timezone,
+            "CLAWVOICE_MODEL": DEFAULT_MODEL,
+            "OPENCLAW_GATEWAY_TOKEN": secrets.token_hex(32),
+        }
+        env_text = "# Private ClawVoice Astra coding agent runtime. Never commit or share.\n"
+        env_text += "".join(f"{key}={value}\n" for key, value in values.items())
+        write_if_absent(loc / "runtime.env", env_text)
+
+        active_env = load_env("astra")
+        config_target = loc / "state/openclaw.json"
+        if not owned_path(config_target).exists():
+            config = json.loads((ROOT / "config/openclaw-astra.json").read_text(encoding="utf-8"))
+            config["agents"]["defaults"]["model"] = {"primary": active_env["CLAWVOICE_MODEL"], "fallbacks": []}
+            config["agents"]["defaults"]["userTimezone"] = active_env["CLAWVOICE_TIMEZONE"]
+            entry = config["agents"]["entries"]["astra"]
+            entry["name"] = active_env["CLAWVOICE_NAME"]
+            entry["identity"]["name"] = active_env["CLAWVOICE_NAME"]
+            active_port = active_env["CLAWVOICE_OPENCLAW_PORT"]
+            config["gateway"]["controlUi"]["allowedOrigins"] = [
+                f"http://localhost:{active_port}", f"http://127.0.0.1:{active_port}"
+            ]
+            write_if_absent(config_target, json.dumps(config, indent=2) + "\n")
+
+        ws_root = astra_workspace_dir()
+        for subdir in ("projects", "project-state", "logs"):
+            workspace_dir_create(ws_root / subdir, ws_root)
+        templates = ROOT / "workspace-astra"
+        count = 0
+        for source in sorted(templates.rglob("*")):
+            if source.is_file() and source.suffix != ".pyc" and "__pycache__" not in source.parts:
+                rel = source.relative_to(templates)
+                target = ws_root / rel
+                text = source.read_text(encoding="utf-8").replace(
+                    "{{CLAWVOICE_NAME}}", active_env["CLAWVOICE_NAME"]
+                )
+                mode = 0o755 if source.parent.name == "bin" else 0o644
+                created = write_workspace_file_if_absent(target, text, ws_root, mode=mode)
+                count += int(created)
+        print(f"Initialized isolated Astra OpenClaw state; seeded {count} workspace files in {ws_root}.")
+        print("Next: start the Astra container and authenticate OpenAI/Codex OAuth for agent 'astra'.")
+        print("Existing private files and projects are preserved; repeat init will not overwrite them.")
+        return
+
     for rel in ("", "state", "state/workspace", "google"):
         private_dir(LOCAL / rel)
     values = {
@@ -122,12 +251,12 @@ def initialize(timezone: str, name: str, port: int) -> None:
         config = json.loads((ROOT / "config/openclaw.json").read_text(encoding="utf-8"))
         config["agents"]["defaults"]["model"] = {"primary": active_env["CLAWVOICE_MODEL"], "fallbacks": []}
         config["agents"]["defaults"]["userTimezone"] = active_env["CLAWVOICE_TIMEZONE"]
-        agent = config["agents"]["entries"]["tari"]
-        agent["name"] = active_env["CLAWVOICE_NAME"]
-        agent["identity"]["name"] = active_env["CLAWVOICE_NAME"]
-        port = active_env["CLAWVOICE_OPENCLAW_PORT"]
+        agent_entry = config["agents"]["entries"]["tari"]
+        agent_entry["name"] = active_env["CLAWVOICE_NAME"]
+        agent_entry["identity"]["name"] = active_env["CLAWVOICE_NAME"]
+        port_str = active_env["CLAWVOICE_OPENCLAW_PORT"]
         config["gateway"]["controlUi"]["allowedOrigins"] = [
-            f"http://localhost:{port}", f"http://127.0.0.1:{port}"
+            f"http://localhost:{port_str}", f"http://127.0.0.1:{port_str}"
         ]
         write_if_absent(config_target, json.dumps(config, indent=2) + "\n")
     templates = ROOT / "workspace"
@@ -194,9 +323,40 @@ def install_planner() -> None:
     print(f"Installed planner: {len(plans)} workspace files changed; private state preserved.")
 
 
-def update_workspace() -> None:
+def update_workspace(agent: str = "tari") -> None:
     """Upgrade known P1 templates only; back up files and never touch planner data."""
     import hashlib
+    if agent == "astra":
+        active_env = load_env("astra")
+        ws_root = astra_workspace_dir()
+        templates = ROOT / "workspace-astra"
+        updated_count = 0
+        for source in sorted(templates.rglob("*")):
+            if source.is_file() and source.suffix != ".pyc" and "__pycache__" not in source.parts:
+                rel = source.relative_to(templates)
+                target = owned_workspace_path(ws_root / rel, ws_root)
+                workspace_dir_create(target.parent, ws_root)
+                new_text = source.read_text(encoding="utf-8").replace(
+                    "{{CLAWVOICE_NAME}}", active_env["CLAWVOICE_NAME"]
+                )
+                old_text = target.read_text(encoding="utf-8") if target.exists() else None
+                if old_text == new_text:
+                    continue
+                mode = 0o755 if source.parent.name == "bin" else 0o644
+                tmp = target.with_name(".astra-update-" + secrets.token_hex(6))
+                try:
+                    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, mode)
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        handle.write(new_text)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(tmp, target)
+                    updated_count += 1
+                finally:
+                    tmp.unlink(missing_ok=True)
+        print(f"Updated {updated_count} Astra workspace template files; projects and state untouched.")
+        return
+
     load_env()
     # Accepted earlier template versions per file: the first P1 release and the
     # P1 fixes release (5a78c91). Anything else is an owner customization.
@@ -244,8 +404,10 @@ def update_workspace() -> None:
     print(f"Updated {len(plans)} known workspace templates; backups saved locally; planner data untouched.")
 
 
-def compose_args(*command: str) -> tuple[list[str], dict[str, str]]:
-    data = load_env()
+def compose_args(*command: str, agent: str = "tari") -> tuple[list[str], dict[str, str]]:
+    data = load_env(agent)
+    loc = local_dir_for(agent)
+    compose_file = ROOT / ("compose.astra.yaml" if agent == "astra" else "compose.yaml")
     # Do not inherit production OpenClaw, Tari, Google or other model credentials.
     process_env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("COMPOSE_", "OPENCLAW_", "TARI_", "GOG_",
@@ -253,21 +415,40 @@ def compose_args(*command: str) -> tuple[list[str], dict[str, str]]:
     process_env.update(data)
     cmd = [
         "docker", "compose", "--project-directory", str(ROOT),
-        "--env-file", str(LOCAL / "runtime.env"),
-        "-f", str(ROOT / "compose.yaml"),
+        "--env-file", str(loc / "runtime.env"),
+        "-f", str(compose_file),
         "-p", data["COMPOSE_PROJECT_NAME"], *command,
     ]
     return cmd, process_env
 
 
-def run_compose(*args: str) -> int:
-    cmd, env = compose_args(*args)
+def run_compose(*args: str, agent: str = "tari") -> int:
+    cmd, env = compose_args(*args, agent=agent)
     return subprocess.call(cmd, cwd=ROOT, env=env)
 
 
-def check_gateway() -> None:
-    data = load_env()
+def run_astra_project(*args: str) -> int:
+    ws_root = astra_workspace_dir()
+    seeded_helper = ws_root / "bin/astra-project"
+    template_helper = ROOT / "workspace-astra/bin/astra-project"
+    helper_path = seeded_helper if seeded_helper.is_file() else template_helper
+    if not helper_path.is_file():
+        raise RuntimeError("Missing astra-project helper binary")
+    env = dict(os.environ)
+    env["ASTRA_WORKSPACE_DIR"] = str(ws_root)
+    try:
+        data = load_env("astra")
+        if "ASTRA_PREVIEW_PORT" in data:
+            env["ASTRA_PREVIEW_PORT"] = data["ASTRA_PREVIEW_PORT"]
+    except RuntimeError:
+        env.setdefault("ASTRA_PREVIEW_PORT", str(ASTRA_DEFAULT_PREVIEW_PORT))
+    return subprocess.call([sys.executable, str(helper_path), *args], env=env)
+
+
+def check_gateway(agent: str = "tari") -> None:
+    data = load_env(agent)
     base = f"http://127.0.0.1:{data['CLAWVOICE_OPENCLAW_PORT']}"
+    model_selector = f"openclaw/{agent}"
     try:
         with urllib.request.urlopen(base + "/healthz", timeout=10) as response:
             if response.status != 200:
@@ -275,7 +456,7 @@ def check_gateway() -> None:
         # A session key and agent selector must never substitute for auth.
         request = urllib.request.Request(
             base + "/v1/chat/completions",
-            data=json.dumps({"model": "openclaw/tari", "user": "unauthenticated-check",
+            data=json.dumps({"model": model_selector, "user": "unauthenticated-check",
                              "messages": [{"role": "user", "content": "auth boundary check"}]}).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
         try:
@@ -299,13 +480,13 @@ def check_gateway() -> None:
     print("Gateway health, auth rejection, and authenticated route: passed", flush=True)
 
 
-def chat(prompt: str, conversation: str) -> None:
-    data = load_env()
+def chat(prompt: str, conversation: str, agent: str = "tari") -> None:
+    data = load_env(agent)
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", conversation):
         raise RuntimeError("Use a short opaque conversation ID")
     target = f"http://127.0.0.1:{data['CLAWVOICE_OPENCLAW_PORT']}/v1/chat/completions"
     body = json.dumps({
-        "model": "openclaw/tari",  # OpenClaw agent selector, not provider model
+        "model": f"openclaw/{agent}",  # OpenClaw agent selector, not provider model
         "user": conversation,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
@@ -333,75 +514,97 @@ def chat(prompt: str, conversation: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--agent", choices=("tari", "astra"), default="tari")
     sub = parser.add_subparsers(dest="action", required=True)
     init = sub.add_parser("init")
     init.add_argument("--timezone", default="America/Toronto")
-    init.add_argument("--name", default="Tari")
-    init.add_argument("--port", type=int, default=DEFAULT_PORT)
-    for action in ("update-workspace", "install-planner", "planner", "start", "stop", "status", "logs", "doctor", "openclaw", "gog", "google"):
-        sub.add_parser(action, add_help=action not in ("planner", "openclaw", "gog", "google"))
+    init.add_argument("--name", default=None)
+    init.add_argument("--port", type=int, default=None)
+    init.add_argument("--preview-port", type=int, default=ASTRA_DEFAULT_PREVIEW_PORT)
+    for action in ("update-workspace", "install-planner", "planner", "project", "start", "stop", "status", "logs", "doctor", "openclaw", "gog", "google"):
+        sub.add_parser(action, add_help=action not in ("planner", "project", "openclaw", "gog", "google"))
     speak = sub.add_parser("chat")
     speak.add_argument("prompt")
     speak.add_argument("--conversation", default="clawvoice-demo")
     args, rest = parser.parse_known_args()
+    agent = args.agent
     if args.action == "init":
         if rest:
             parser.error("Unexpected arguments")
-        initialize(args.timezone, args.name, args.port)
+        default_name = "Astra" if agent == "astra" else "Tari"
+        default_port = ASTRA_DEFAULT_PORT if agent == "astra" else DEFAULT_PORT
+        initialize(
+            args.timezone,
+            args.name or default_name,
+            args.port if args.port is not None else default_port,
+            agent=agent,
+            preview_port=args.preview_port,
+        )
         return 0
     if args.action == "start":
-        return run_compose("up", "-d", "--build", "--wait", "--wait-timeout", "90", "openclaw")
+        return run_compose("up", "-d", "--build", "--wait", "--wait-timeout", "90", "openclaw", agent=agent)
     if args.action == "update-workspace":
         if rest:
             parser.error("Unexpected arguments")
-        update_workspace()
+        update_workspace(agent=agent)
         return 0
     if args.action == "install-planner":
-        if rest:
-            parser.error("Unexpected arguments")
+        if rest or agent != "tari":
+            parser.error("install-planner applies only to Tari with no extra arguments")
         install_planner()
         return 0
     if args.action == "planner":
-        return run_compose("exec", "-T", "openclaw", "./bin/day-planner", *rest)
+        return run_compose("exec", "-T", "openclaw", "./bin/day-planner", *rest, agent="tari")
+    if args.action == "project":
+        return run_astra_project(*rest)
     if args.action == "stop":
-        return run_compose("stop", "openclaw")
+        return run_compose("stop", "openclaw", agent=agent)
     if args.action == "status":
-        return run_compose("ps")
+        return run_compose("ps", agent=agent)
     if args.action == "logs":
-        return run_compose("logs", "--tail", "100", "openclaw")
+        return run_compose("logs", "--tail", "100", "openclaw", agent=agent)
     if args.action == "doctor":
         if rest:
             parser.error("Unexpected arguments")
-        data = load_env()
+        data = load_env(agent)
         if not shutil.which("docker"):
             raise RuntimeError("Docker CLI is missing")
         print("Isolated project:", data["COMPOSE_PROJECT_NAME"])
+        print("Agent:", agent)
         print("Local Gateway port:", data["CLAWVOICE_OPENCLAW_PORT"])
-        print("Google account configured:", bool(data.get("TARI_GOOGLE_ACCOUNT")))
-        for command in (("config", "--quiet"),
-                        ("exec", "-T", "openclaw", "node", "/app/openclaw.mjs", "config", "validate", "--json"),
-                        ("exec", "-T", "openclaw", "gog", "--version")):
-            status = run_compose(*command)
+        if agent == "astra":
+            print("Local Preview port:", data.get("ASTRA_PREVIEW_PORT", ASTRA_DEFAULT_PREVIEW_PORT))
+            print("Astra workspace:", astra_workspace_dir())
+        else:
+            print("Google account configured:", bool(data.get("TARI_GOOGLE_ACCOUNT")))
+        commands: list[tuple[str, ...]] = [
+            ("config", "--quiet"),
+            ("exec", "-T", "openclaw", "node", "/app/openclaw.mjs", "config", "validate", "--json"),
+        ]
+        if agent == "tari":
+            commands.append(("exec", "-T", "openclaw", "gog", "--version"))
+        for command in commands:
+            status = run_compose(*command, agent=agent)
             if status:
                 return status
-        check_gateway()
-        return run_compose("ps")
+        check_gateway(agent=agent)
+        return run_compose("ps", agent=agent)
     if args.action == "openclaw":
         if not rest:
             parser.error("Pass OpenClaw CLI arguments")
-        return run_compose("exec", "openclaw", "node", "/app/openclaw.mjs", *rest)
+        return run_compose("exec", "openclaw", "node", "/app/openclaw.mjs", *rest, agent=agent)
     if args.action == "gog":
         if not rest:
             parser.error("Pass gog CLI arguments")
-        return run_compose("exec", "openclaw", "gog", *rest)
+        return run_compose("exec", "openclaw", "gog", *rest, agent="tari")
     if args.action == "google":
         if not rest:
             parser.error("Pass calendar/gmail helper arguments")
-        return run_compose("exec", "-T", "openclaw", "./bin/tari-google", *rest)
+        return run_compose("exec", "-T", "openclaw", "./bin/tari-google", *rest, agent="tari")
     if args.action == "chat":
         if rest:
             parser.error("Unexpected arguments")
-        chat(args.prompt, args.conversation)
+        chat(args.prompt, args.conversation, agent=agent)
         return 0
     raise RuntimeError("Unknown command")
 

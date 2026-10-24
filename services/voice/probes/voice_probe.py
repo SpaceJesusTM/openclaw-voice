@@ -602,18 +602,18 @@ async def scenario_e(url: str, timeout: float, out: dict) -> dict:
 
 
 async def scenario_f(url: str, timeout: float, out: dict) -> dict:
-    """Portability: the fixture agent Astra through the same runtime (fake Gateway).
+    """Portability: the fixture agent through the same runtime (fake Gateway).
 
     Start first: ``make fixture-gateway`` and ``PORT=7861 make fixture-dev``;
     run with ``--fixture-url http://127.0.0.1:7861 --scenario f``.
     """
     agents = await api(url, "/api/agents")
-    require(agents["default"] == "astra", "fixture server is not serving Astra")
-    state = await api(url, "/api/state?agent=astra")
+    require(agents["default"] == "fixture", "fixture server is not serving the fixture agent")
+    state = await api(url, "/api/state?agent=fixture")
     out["transport"] = state["gateway"]["active_transport"]
     probe = Probe(url, timeout)
     try:
-        await probe.connect(agent="astra")
+        await probe.connect(agent="fixture")
         out["greeting"] = await probe.wait_turn(0, "greeting")
         ask = await probe.say("What's the status of my project?")
         out["status_reply"] = await probe.wait_turn(ask, "project status")
@@ -890,9 +890,179 @@ async def scenario_j(url: str, timeout: float, out: dict) -> dict:
     return out
 
 
+async def preview_get(url: str = "http://127.0.0.1:18950/") -> tuple[int, str]:
+    async with aiohttp.ClientSession() as http:
+        async with http.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+            return response.status, await response.text()
+
+
+async def scenario_k(url: str, timeout: float, out: dict) -> dict:
+    """Real Astra coding agent: website creation, preview on 127.0.0.1:18950,
+    live file modifications ('Moonlight Coffee', 'Welcome to Astra Studio'),
+    hot-context cache reads, and live OpenClaw fallback."""
+    agents = await api(url, "/api/agents")
+    astra_ids = [a["id"] for a in agents["agents"]]
+    require("astra" in astra_ids, f"astra not in /api/agents: {astra_ids}")
+    state = await api(url, "/api/state?agent=astra")
+    out["transport"] = state["gateway"]["active_transport"]
+    require(state["gateway"]["http"]["available"] or state["gateway"]["active_transport"] == "ws",
+            "Astra Gateway is not available")
+
+    probe = Probe(url, timeout)
+    try:
+        await probe.connect(agent="astra")
+        out["greeting"] = await greet(probe, url, agent="astra")
+        out["model"] = probe.model
+
+        # 1. Create a simple website for a fictional coffee shop.
+        create = await probe.say("Astra, create a simple website for a fictional coffee shop.")
+        await probe.wait(lambda: any(t["name"] == "delegate_task" for t in probe.tools(create)), "delegate_task create", 60)
+        delegated = next(t for t in probe.tools(create) if t["name"] == "delegate_task")
+        require(delegated.get("status") == "accepted", f"create delegate status: {delegated}")
+        create_job_id = delegated["job_id"]
+        out["create_ack"] = await probe.wait_turn(create, "create acknowledgement", timeout=60)
+
+        # While it works (or immediately after acknowledgement), ask what project Astra is working on.
+        during = await probe.say("What project are you working on?")
+        out["during_work_reply"] = await probe.wait_turn(during, "status during work", timeout=60)
+        during_tools = [t["name"] for t in probe.tools(during)]
+        out["during_work_tools"] = during_tools
+        require(any(n in ("get_context", "check_tasks") for n in during_tools),
+                f"status question did not read cache or tasks: {during_tools}")
+        require("delegate_task" not in during_tools, "status question started a new OpenClaw job")
+
+        await probe.wait(lambda: probe.jobs(create, create_job_id, "job.finished"), "create job finish", 360)
+        create_job = probe.jobs(create, create_job_id, "job.finished")[-1]["job"]
+        out["create_job"] = {k: create_job.get(k) for k in ("job_id", "kind", "target", "status", "verification", "outcome_text")}
+        require(create_job["status"] == "completed" and create_job["verification"] == "verified",
+                f"website creation not verified: {create_job}")
+        out["create_announcement"] = await probe.wait_turn(probe.mark(), "create announcement", timeout=90)
+
+        # Verify real files on host disk and live HTTP preview on 127.0.0.1:18950.
+        ws_projects = REPO / "astra-workspace" / "projects"
+        html_files = sorted(ws_projects.glob("*/index.html"), key=lambda p: p.stat().st_mtime, reverse=True)
+        require(html_files, "no index.html created in astra-workspace/projects/*/")
+        index_path = html_files[0]
+        project_slug = index_path.parent.name
+        out["project_slug"] = project_slug
+        out["index_path"] = str(index_path.relative_to(REPO))
+        disk_html_1 = index_path.read_text(encoding="utf-8")
+        require("<html" in disk_html_1.lower() and "coffee" in disk_html_1.lower(),
+                "created index.html does not contain coffee shop HTML")
+        status_code_1, preview_html_1 = await preview_get("http://127.0.0.1:18950/")
+        out["preview_after_create"] = {"http_status": status_code_1, "bytes": len(preview_html_1)}
+        require(status_code_1 == 200 and "coffee" in preview_html_1.lower(),
+                f"preview on 127.0.0.1:18950 failed after create: HTTP {status_code_1}")
+
+        # 2. Modify the website title to Moonlight Coffee.
+        edit_title = await probe.say("Astra, change the website title to Moonlight Coffee.")
+        title_job = await wait_job(probe, edit_title, "change title to Moonlight Coffee", 360)
+        out["title_job"] = {k: title_job.get(k) for k in ("job_id", "kind", "target", "status", "verification", "outcome_text")}
+        require(title_job["status"] == "completed" and title_job["verification"] == "verified",
+                f"title update not verified: {title_job}")
+        out["title_announcement"] = await probe.wait_turn(probe.mark(), "title announcement", timeout=90)
+
+        disk_html_2 = index_path.read_text(encoding="utf-8")
+        require(re.search(r"<title>\s*Moonlight Coffee\s*</title>", disk_html_2, re.I),
+                "index.html on disk does not have <title>Moonlight Coffee</title>")
+        status_code_2, preview_html_2 = await preview_get("http://127.0.0.1:18950/")
+        out["preview_after_title"] = {"http_status": status_code_2, "has_title": True}
+        require(status_code_2 == 200 and re.search(r"<title>\s*Moonlight Coffee\s*</title>", preview_html_2, re.I),
+                "live preview on 127.0.0.1:18950 does not have <title>Moonlight Coffee</title>")
+
+        # 3. Modify the heading to Welcome to Astra Studio.
+        edit_heading = await probe.say("Change the heading to Welcome to Astra Studio.")
+        heading_job = await wait_job(probe, edit_heading, "change heading to Welcome to Astra Studio", 360)
+        out["heading_job"] = {k: heading_job.get(k) for k in ("job_id", "kind", "target", "status", "verification", "outcome_text")}
+        require(heading_job["status"] == "completed" and heading_job["verification"] == "verified",
+                f"heading update not verified: {heading_job}")
+        out["heading_announcement"] = await probe.wait_turn(probe.mark(), "heading announcement", timeout=90)
+
+        disk_html_3 = index_path.read_text(encoding="utf-8")
+        require(re.search(r"<h1[^>]*>\s*Welcome to Astra Studio\s*</h1>", disk_html_3, re.I),
+                "index.html on disk does not have <h1>Welcome to Astra Studio</h1>")
+        status_code_3, preview_html_3 = await preview_get("http://127.0.0.1:18950/")
+        out["preview_after_heading"] = {"http_status": status_code_3, "has_heading": True}
+        require(status_code_3 == 200 and re.search(r"<h1[^>]*>\s*Welcome to Astra Studio\s*</h1>", preview_html_3, re.I),
+                "live preview on 127.0.0.1:18950 does not have <h1>Welcome to Astra Studio</h1>")
+
+        # 4. Hot-context cache queries (0 new OpenClaw runs).
+        jobs_before = len((await api(url, "/api/state?agent=astra"))["jobs"])
+        cache_queries = [
+            ("active", "What project are you working on?", ("projects.active",)),
+            ("recent", "What projects have we worked on recently?", ("projects.recent", "projects.active")),
+            ("latest_update", "What's the latest update on the website?", ("project.latest_update", "projects.active")),
+            ("still_working", "Are you still working on that?", ("jobs.recent", "projects.active", "project.latest_update")),
+            ("build_pass", "Did the website build pass?", ("project.latest_update", "projects.active")),
+        ]
+        out["cache_queries"] = {}
+        for key, question, expected_topics in cache_queries:
+            ask = await probe.say(question)
+            reply = await probe.wait_turn(ask, f"cache query {key}", timeout=60)
+            reads = [t for t in probe.tools(ask, "get_context") if t.get("topic") in expected_topics]
+            tasks_checked = probe.tools(ask, "check_tasks")
+            require(not probe.tools(ask, "delegate_task"), f"cache query {key} unexpectedly delegated to OpenClaw")
+            if reads:
+                require(reads[0]["status"] == "fresh", f"cache query {key} read non-fresh topic: {reads[0]}")
+                out["cache_queries"][key] = {
+                    "reply": reply,
+                    "topic": reads[0].get("topic"),
+                    "status": reads[0].get("status"),
+                    "cache": reads[0].get("cache"),
+                }
+            elif key == "still_working" and tasks_checked:
+                out["cache_queries"][key] = {
+                    "reply": reply,
+                    "tool": "check_tasks",
+                    "status": tasks_checked[0].get("status"),
+                }
+            elif key in ("still_working", "build_pass"):
+                # Answered from the immediately preceding fresh projects.active / project.latest_update read
+                # in the same session with 0 new OpenClaw jobs.
+                if key == "still_working":
+                    require(
+                        re.search(r"\b(no|not|idle|finish|done|complete)\b", norm(reply)),
+                        f"still_working reply did not report idle/finished state: {reply}",
+                    )
+                    topic_used = "projects.active (session)"
+                else:
+                    require(
+                        re.search(r"pass|exit code (?:0|zero)|valid", norm(reply)),
+                        f"build_pass reply did not report passed validation: {reply}",
+                    )
+                    topic_used = "project.latest_update (session)"
+                out["cache_queries"][key] = {
+                    "reply": reply,
+                    "topic": topic_used,
+                    "status": "fresh",
+                    "cache": "hit",
+                }
+            else:
+                raise ProbeFailure(f"cache query {key} did not read fresh {expected_topics}: {probe.tools(ask)}")
+        jobs_after = len((await api(url, "/api/state?agent=astra"))["jobs"])
+        require(jobs_after == jobs_before, f"cached status questions created {jobs_after - jobs_before} new jobs")
+
+        # 5. Live OpenClaw fallback outside cache coverage.
+        live_q = await probe.say("Can you inspect the actual index.html file live, not the cache, and tell me the exact text inside the h1 tag?")
+        live_job = await wait_job(probe, live_q, "live file inspection", 300)
+        out["live_fallback_job"] = {k: live_job.get(k) for k in ("job_id", "kind", "status", "outcome_text")}
+        require(live_job["kind"] == "question" and live_job["status"] == "completed",
+                f"live fallback question did not complete: {live_job}")
+        out["live_fallback_announcement"] = await probe.wait_turn(probe.mark(), "live fallback announcement", timeout=90)
+        require("welcome to astra studio" in norm(out["live_fallback_announcement"])
+                or "welcome to astra studio" in norm(live_job.get("outcome_text", "")),
+                "live inspection did not report 'Welcome to Astra Studio'")
+    finally:
+        await probe.close()
+        out["session"] = probe.report()
+        await settle_jobs(url, agent="astra")
+    return out
+
+
 SCENARIOS = {
     "a": scenario_a, "b": scenario_b, "c": scenario_c, "d": scenario_d, "e": scenario_e,
     "f": scenario_f, "g": scenario_g, "h": scenario_h, "i": scenario_i, "j": scenario_j,
+    "k": scenario_k,
 }
 
 

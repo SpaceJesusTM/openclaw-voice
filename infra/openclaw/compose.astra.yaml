@@ -1,0 +1,42 @@
+services:
+  openclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: clawvoice-openclaw:openclaw2026.9.9-gog0.40.0
+    user: "${CLAWVOICE_UID:-1000}:${CLAWVOICE_GID:-1000}"
+    init: true
+    entrypoint: ["node", "/app/openclaw.mjs"]
+    command: ["gateway", "--bind", "lan", "--port", "18789"]
+    working_dir: /home/node/.openclaw/workspace
+    env_file: .local-astra/runtime.env
+    environment:
+      HOME: /home/node
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      ASTRA_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      ASTRA_PREVIEW_PORT: "${ASTRA_PREVIEW_PORT:-18950}"
+      ASTRA_PREVIEW_BIND: "0.0.0.0"
+      XDG_CACHE_HOME: /tmp/cache
+      TZ: "${CLAWVOICE_TIMEZONE:-America/Toronto}"
+    ports:
+      - "127.0.0.1:${CLAWVOICE_OPENCLAW_PORT:-18949}:18789"
+      - "127.0.0.1:${ASTRA_PREVIEW_PORT:-18950}:${ASTRA_PREVIEW_PORT:-18950}"
+    volumes:
+      - ./.local-astra/state:/home/node/.openclaw
+      - ../../astra-workspace:/home/node/.openclaw/workspace
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=268435456,mode=1777
+      - /home/node/.npm:rw,nosuid,nodev,size=268435456,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 360s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+

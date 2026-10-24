@@ -63,6 +63,8 @@ def _validate(receipt: Any) -> tuple[dict[str, Any] | None, str | None]:
                 clean[str(key)[:40]] = value[:300]
             elif isinstance(value, (int, float, bool)):
                 clean[str(key)[:40]] = value
+            elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+                clean[str(key)[:40]] = ",".join(item.strip() for item in value if item.strip())[:300]
         clean_changes.append(clean)
     summary = receipt.get("summary")
     return {

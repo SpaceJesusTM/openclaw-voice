@@ -59,9 +59,27 @@ def test_tari_configuration_is_loaded_from_files_not_code():
     assert set(tari.receipt_types) == {"calendar_event", "planner_block", "checklist_task"}
 
 
+def test_astra_configuration_is_loaded_from_files_not_code():
+    registry = load_registry(environ={})
+    astra = registry.get("astra")
+    assert astra.id == "astra" and astra.display_name == "Astra"
+    assert astra.fixture is False
+    assert astra.color == "#3b82f6"
+    assert astra.session_key == "agent:astra:clawvoice-local-owner"
+    assert astra.gateway.ws_url == "ws://127.0.0.1:18949"
+    assert astra.gateway.http_url == "http://127.0.0.1:18949"
+    assert astra.gateway.token_ref == "envfile:infra/openclaw/.local-astra/runtime.env#OPENCLAW_GATEWAY_TOKEN"
+    assert astra.gateway.device_file != registry.get("tari").gateway.device_file
+    assert astra.plugins == ("coding_workspace",)
+    assert [t.key for t in astra.topics] == [
+        "projects.active", "projects.recent", "project.latest_update", "jobs.recent"
+    ]
+    assert set(astra.receipt_types) == {"coding_change", "test_run"}
+
+
 def test_fixtures_load_only_when_enabled():
-    assert list(load_registry(environ={}).agents) == ["tari"]
-    assert list(load_registry(environ={"CLAWVOICE_ENABLE_FIXTURES": "1"}).agents) == ["tari", "astra"]
+    assert list(load_registry(environ={}).agents) == ["tari", "astra"]
+    assert list(load_registry(environ={"CLAWVOICE_ENABLE_FIXTURES": "1"}).agents) == ["tari", "astra", "fixture"]
     registry = load_registry(environ={"CLAWVOICE_AGENTS": "astra"})
     assert registry.default.id == "astra"
 
@@ -70,7 +88,7 @@ def test_public_identity_exposes_no_endpoints_or_secret_references():
     registry = load_registry(environ={"CLAWVOICE_ENABLE_FIXTURES": "1"})
     for agent in registry.all():
         text = json.dumps(agent.public_identity())
-        for forbidden in ("token", "envfile", "ws://", "http://", "manage.py", "18939"):
+        for forbidden in ("token", "envfile", "ws://", "http://", "manage.py", "18939", "18949"):
             assert forbidden not in text
 
 

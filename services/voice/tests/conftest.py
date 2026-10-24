@@ -47,10 +47,36 @@ def agent_from(data: dict) -> AgentConfig:
 
 
 def astra_config(port: int, transport: str = "ws", **timeouts) -> AgentConfig:
-    data = copy.deepcopy(load_yaml("astra"))
+    data = copy.deepcopy(load_yaml("fixture"))
+    data["id"] = "astra"
+    data["display_name"] = "Astra"
+    data["emoji"] = "🔵"
+    data["color"] = "#3b82f6"
     data["openclaw"]["gateway"]["ws_url"] = f"ws://127.0.0.1:{port}"
     data["openclaw"]["gateway"]["http_url"] = f"http://127.0.0.1:{port}"
     data["openclaw"]["gateway"]["transport"] = transport
+    data["openclaw"]["timeouts"].update(timeouts)
+    return agent_from(data)
+
+
+def astra_workspace_config(port: int, workspace_dir: Path, transport: str = "ws", **timeouts) -> AgentConfig:
+    """Real Astra configuration backed by coding_workspace plugin and astra-project helper."""
+    data = copy.deepcopy(load_yaml("astra"))
+    data["openclaw"]["gateway"].update(
+        ws_url=f"ws://127.0.0.1:{port}",
+        http_url=f"http://127.0.0.1:{port}",
+        token_ref="env:CLAWVOICE_FIXTURE_GATEWAY_TOKEN",
+        transport=transport,
+        device_file="astra-fixture-device.json",
+    )
+    data["helpers"] = {
+        "project": [
+            "{python}",
+            "{repo}/infra/openclaw/workspace-astra/bin/astra-project",
+            "--workspace",
+            str(workspace_dir),
+        ]
+    }
     data["openclaw"]["timeouts"].update(timeouts)
     return agent_from(data)
 

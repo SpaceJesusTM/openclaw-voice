@@ -1,0 +1,69 @@
+# Deterministic offline fixture agent for unit and portability tests.
+# Talks to clawvoice.testing.fake_gateway and clawvoice.testing.fixture_helper only.
+id: fixture
+display_name: Fixture
+emoji: "🧪"
+color: "#64748b"
+role_file: fixture.md
+fixture: true
+owner_scope: local-owner
+timezone: America/Toronto
+voice:
+  boson_voice: default
+
+openclaw:
+  agent_id: astra
+  gateway:
+    ws_url: ws://127.0.0.1:18999
+    http_url: http://127.0.0.1:18999
+    token_ref: env:CLAWVOICE_FIXTURE_GATEWAY_TOKEN
+    transport: ws
+    device_file: fixture-gateway-device.json
+  timeouts:
+    question_seconds: 60
+    change_seconds: 120
+
+helpers:
+  project: ["{python}", "-m", "clawvoice.testing.fixture_helper", "project"]
+
+hot_context:
+  defaults:
+    ttl_seconds: 180
+    max_staleness_seconds: 900
+  topics:
+    - key: project.active
+      description: "the active project's status and open tasks"
+      coverage: "the active project's current status and open task count only"
+      resolver: command_json
+      args:
+        helper: project
+        argv: [status, --json]
+        summary_field: summary
+        value_fields: [name, branch, open_tasks]
+    - key: tests.last
+      description: "the latest test run result"
+      coverage: "the most recent test run only"
+      resolver: command_json
+      args: {helper: project, argv: [tests, --json], summary_field: summary}
+    - key: jobs.recent
+      description: "background tasks in progress and recent results"
+      coverage: "the most recent ClawVoice background tasks only"
+      resolver: recent_jobs
+      ttl_seconds: 30
+
+delegation:
+  targets: [tests, project, other]
+  clarify: "which project and which test suite"
+  receipt_types:
+    test_run:
+      verifier: helper_lookup
+      args:
+        helper: project
+        argv: [tests, --json, --run-id, "{run_id}"]
+        found_field: found
+        facts: {status: status, passed: passed, total: total}
+        require: {status: passed}
+        message_field: summary
+      invalidates: [tests.last, project.active]
+      format: '{"type":"test_run","action":"completed","run_id":"<test run id>"}'
+

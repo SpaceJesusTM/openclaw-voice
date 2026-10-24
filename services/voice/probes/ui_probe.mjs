@@ -115,6 +115,24 @@ try {
   await page.locator('#disconnect').click();
   await expect(page.locator('#agent-state')).toContainText('Not connected');
   mark('disconnect');
+
+  // Switch to Astra via the agent selector and verify independent session + state.
+  await page.locator('#agent-selector [data-agent-id="astra"]').click();
+  await expect(page.locator('#agent-name')).toContainText('Astra');
+  await expect(page.locator('#gateway-badge')).toContainText(/HTTP|WebSocket/, { timeout: 15000 });
+  await expect(page.locator('#topics')).toContainText('projects.active', { timeout: 15000 });
+  await expect(page.locator('.turn')).toHaveCount(0);
+  mark('switch-to-astra', { gateway: await page.locator('#gateway-badge').innerText() });
+
+  await page.locator('#connect').click();
+  await expect(page.locator('#model-badge')).toContainText('higgs-realtime-1.5-preview · verified', { timeout: 30000 });
+  await expect(page.locator('.turn.bot').first()).toBeVisible({ timeout: 30000 });
+  mark('astra-connect-and-greeting');
+  await page.screenshot({ path: fileURLToPath(new URL('ui-astra-connected.png', captures)), fullPage: true });
+
+  await page.locator('#disconnect').click();
+  await expect(page.locator('#agent-state')).toContainText('Not connected');
+  mark('astra-disconnect');
   if (errors.length) throw new Error(`page errors: ${errors.join('; ')}`);
 } catch (error) {
   status = 'FAIL';

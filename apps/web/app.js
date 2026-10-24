@@ -8,6 +8,7 @@ const MODEL = "higgs-realtime-1.5-preview";
 const ACTIVE = new Set(["accepted", "queued", "running", "verifying"]);
 
 const ui = {
+  agents: [],
   agent: null,
   pc: null,
   dc: null,
@@ -70,13 +71,94 @@ function hexToSoft(hex, alpha) {
 }
 
 // ------------------------------------------------------------------ agent + state
+function shortRole(agent) {
+  if (!agent) return "";
+  if (agent.id === "tari") return "Personal Assistant";
+  if (agent.id === "astra") return "Coding Assistant";
+  const raw = String(agent.role || "").split(/[.:]/)[0].trim();
+  return raw || "Assistant";
+}
+
+function renderAgentSelector() {
+  const bar = $("agent-selector");
+  if (!bar) return;
+  const agents = ui.agents || [];
+  if (agents.length <= 1) {
+    bar.hidden = true;
+    bar.innerHTML = "";
+    return;
+  }
+  bar.hidden = false;
+  bar.innerHTML = agents
+    .map((a) => {
+      const selected = a.id === ui.agent?.id;
+      const color = esc(a.color || "#22c55e");
+      return `<button type="button" id="select-agent-${esc(a.id)}" class="agent-tab${selected ? " active" : ""}"
+        role="tab" aria-selected="${selected}" data-agent="${esc(a.id)}" style="--agent-color: ${color}">
+        <span class="agent-dot" aria-hidden="true"></span>
+        <span class="agent-tab-text">
+          <span class="agent-tab-name">${esc(a.display_name)}</span>
+          <span class="agent-tab-role">${esc(shortRole(a))}</span>
+        </span>
+      </button>`;
+    })
+    .join("");
+}
+
+function resetConversationForAgent(agent) {
+  const box = $("transcript");
+  if (!box) return;
+  const example = agent?.id === "astra"
+    ? "create a simple website for a fictional coffee shop."
+    : "What's on my planner today?";
+  box.innerHTML = `<p class="hint">Press <strong>Connect</strong>, allow the microphone, and say “${esc(example)}” Use headphones to avoid echo.</p>`;
+}
+
+async function selectAgent(agentId) {
+  const next = (ui.agents || []).find((a) => a.id === agentId);
+  if (!next || ui.agent?.id === next.id) return;
+  const wasActive = ui.connected || ui.connecting;
+  if (wasActive) {
+    sendRtvi("disconnect-bot", {});
+  }
+  const audio = $("bot-audio");
+  if (audio?.pause) {
+    try { audio.pause(); } catch { /* ignore */ }
+  }
+  teardown();
+  banner(null);
+  ui.agent = next;
+  ui.jobs = new Map();
+  ui.noticed = new Set();
+  ui.topicRows = new Map();
+  ui.lastMetrics = null;
+  ui.lastPoll = 0;
+  if (typeof history !== "undefined" && history.replaceState) {
+    const url = new URL(location.href);
+    url.searchParams.set("agent", next.id);
+    history.replaceState(null, "", url.toString());
+  }
+  renderAgentSelector();
+  renderIdentity();
+  resetConversationForAgent(next);
+  renderJobs();
+  renderTopics({ topics: [], metrics: {} });
+  await refreshState(true);
+  if (wasActive) {
+    await connect();
+  }
+}
+
 async function init() {
   try {
     const data = await (await fetch("/api/agents")).json();
+    ui.agents = data.agents || [];
     const wanted = new URLSearchParams(location.search).get("agent");
-    ui.agent = data.agents.find((a) => a.id === wanted) || data.agents.find((a) => a.id === data.default) || data.agents[0];
+    ui.agent = ui.agents.find((a) => a.id === wanted) || ui.agents.find((a) => a.id === data.default) || ui.agents[0];
+    renderAgentSelector();
     renderIdentity();
-    await refreshState();
+    resetConversationForAgent(ui.agent);
+    await refreshState(true);
   } catch (error) {
     banner("ClawVoice server is not reachable. Start it with `make dev` in services/voice.");
   }
@@ -86,6 +168,7 @@ async function init() {
 
 function renderIdentity() {
   const a = ui.agent;
+  if (!a) return;
   document.title = `ClawVoice · ${a.display_name}`;
   $("agent-name").textContent = `${a.display_name} ${a.emoji || ""}`.trim();
   $("agent-role").textContent = a.role || "";
@@ -93,21 +176,24 @@ function renderIdentity() {
   document.documentElement.style.setProperty("--accent-soft", hexToSoft(a.color, 0.22));
 }
 
-async function refreshState() {
+async function refreshState(force = false) {
   if (!ui.agent) return;
   // While connected, live updates arrive over RTVI; poll only as a slow backstop.
-  if (ui.connected && Date.now() - (ui.lastPoll || 0) < 15000) return;
+  if (!force && ui.connected && Date.now() - (ui.lastPoll || 0) < 15000) return;
+  const requestedAgentId = ui.agent.id;
   ui.lastPoll = Date.now();
   try {
-    const response = await fetch(`/api/state?agent=${encodeURIComponent(ui.agent.id)}`);
-    if (!response.ok) return;
+    const response = await fetch(`/api/state?agent=${encodeURIComponent(requestedAgentId)}`);
+    if (!response.ok || ui.agent?.id !== requestedAgentId) return;
     applyState(await response.json());
   } catch { /* server restarting; next poll will retry */ }
 }
 
 function applyState(state) {
   if (!state) return;
+  if (state.agent?.id && ui.agent?.id && state.agent.id !== ui.agent.id) return;
   renderGateway(state.gateway);
+  ui.jobs = new Map();
   for (const job of state.jobs || []) ui.jobs.set(job.job_id, job);
   renderJobs();
   if (state.cache) {
@@ -189,6 +275,7 @@ $("jobs").addEventListener("click", async (event) => {
 });
 
 function upsertJob(job, event) {
+  if (!job || (job.agent_id && ui.agent?.id && job.agent_id !== ui.agent.id)) return;
   ui.jobs.set(job.job_id, job);
   renderJobs();
   if (event === "job.finished" && !ui.noticed.has(job.job_id)) {
@@ -554,6 +641,11 @@ function onServerMessage(data) {
 }
 
 // ------------------------------------------------------------------ wiring
+$("agent-selector").addEventListener("click", (event) => {
+  const btn = event.target?.closest ? event.target.closest("[data-agent]") : event.target;
+  const agentId = btn?.dataset?.agent;
+  if (agentId) selectAgent(agentId);
+});
 $("connect").addEventListener("click", connect);
 $("disconnect").addEventListener("click", disconnect);
 $("typed-only").addEventListener("change", setButtons);

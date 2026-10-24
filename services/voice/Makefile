@@ -10,7 +10,7 @@ setup:
 	.bootstrap/bin/python -m pip install uv==0.13.5
 	$(UV) sync --locked --python 3.11
 
-# ClawVoice with the configured agents (Tari by default) at http://127.0.0.1:7860
+# ClawVoice with the configured agents (Tari and Astra by default) at http://127.0.0.1:7860
 dev:
 	$(UV) run --locked python -m clawvoice.server --host $(HOST) --port $(PORT)
 
@@ -30,10 +30,10 @@ ui-probe:
 gateway-status:
 	curl -s http://$(HOST):$(PORT)/api/state | python3 -m json.tool | head -40
 
-# Portability demo: a fixture agent (Astra) behind a fake Gateway. No real agent work.
+# Portability demo: a fixture agent behind a fake Gateway. No real agent work.
 fixture-gateway:
 	CLAWVOICE_FIXTURE_GATEWAY_TOKEN=$(FIXTURE_TOKEN) $(UV) run --locked python -m clawvoice.testing.fake_gateway --port 18999
 
 fixture-dev:
-	CLAWVOICE_AGENTS=astra CLAWVOICE_FIXTURE_GATEWAY_TOKEN=$(FIXTURE_TOKEN) \
+	CLAWVOICE_ENABLE_FIXTURES=1 CLAWVOICE_AGENTS=fixture CLAWVOICE_FIXTURE_GATEWAY_TOKEN=$(FIXTURE_TOKEN) \
 	  $(UV) run --locked python -m clawvoice.server --host $(HOST) --port $(PORT)

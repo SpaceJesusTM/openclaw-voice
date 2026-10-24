@@ -80,6 +80,29 @@ h1, h2, h3, h4 { margin: 0; font-weight: 650; }
 }
 
 .agent-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.agent-selector {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px;
+}
+.agent-tab {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px;
+  border: 1px solid transparent; background: transparent; color: var(--muted);
+  text-align: left; cursor: pointer; transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.agent-tab:hover { background: var(--panel-2); color: var(--text); }
+.agent-tab.active {
+  background: var(--panel-2); color: var(--text);
+  border-color: var(--agent-color, var(--accent));
+  box-shadow: 0 0 0 1px var(--agent-color, var(--accent)) inset;
+}
+.agent-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  background: var(--agent-color, var(--accent));
+  box-shadow: 0 0 8px var(--agent-color, var(--accent));
+}
+.agent-tab-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.agent-tab-name { font-size: 14px; font-weight: 650; color: var(--text); }
+.agent-tab-role { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card, .agent-card {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px;
 }

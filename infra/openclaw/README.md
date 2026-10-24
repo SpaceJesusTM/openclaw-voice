@@ -30,3 +30,20 @@ application layer.
 The persistent [Tari day planner](../../docs/planner.md) adds local blocks, commutes
 and a categorized checklist. Existing installations can run `manage.py install-planner`
 to add it without resetting private state; use `manage.py planner show tomorrow`.
+
+## Isolated Astra Coding Agent (`--agent astra`)
+
+Astra (`id: astra`) runs in its own isolated OpenClaw container (`compose.astra.yaml`)
+with private state under `infra/openclaw/.local-astra/` and an isolated coding workspace
+mounted at `<repo>/astra-workspace` (`/home/node/.openclaw/workspace`). Astra has no access
+to Tari's planner, Google credentials, or the ClawVoice source repository.
+
+- **Gateway loopback port**: `http://127.0.0.1:18949` (`ws://127.0.0.1:18949`)
+- **Local preview loopback port**: `http://127.0.0.1:18950`
+
+```bash
+python3 infra/openclaw/manage.py --agent astra init --timezone America/Toronto
+python3 infra/openclaw/manage.py --agent astra start
+python3 infra/openclaw/manage.py --agent astra doctor
+python3 infra/openclaw/manage.py --agent astra openclaw models auth login --provider openai --device-code --agent astra
+```

@@ -1,0 +1,1342 @@
+#!/usr/bin/env python3
+"""Astra's deterministic coding workspace & preview helper.
+
+Manages projects in <workspace>/projects/, metadata in <workspace>/project-state/,
+and logs in <workspace>/logs/. Never accesses files outside the workspace.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+from html.parser import HTMLParser
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from typing import Any
+import urllib.error
+import urllib.request
+
+WORKSPACE = Path(
+    os.environ.get("ASTRA_WORKSPACE_DIR") or Path(__file__).resolve().parent.parent
+).resolve()
+PROJECTS_DIR = WORKSPACE / "projects"
+STATE_DIR = WORKSPACE / "project-state"
+LOGS_DIR = WORKSPACE / "logs"
+REGISTRY_PATH = STATE_DIR / "registry.json"
+PREVIEW_PATH = STATE_DIR / "preview.json"
+PREVIEW_LOG = LOGS_DIR / "preview.log"
+
+DEFAULT_PREVIEW_PORT = int(os.environ.get("ASTRA_PREVIEW_PORT", "18950"))
+DEFAULT_PREVIEW_BIND = os.environ.get("ASTRA_PREVIEW_BIND", "0.0.0.0")
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".next", "dist", "build"}
+IGNORED_FILES = {".DS_Store"}
+
+
+class Fail(Exception):
+    def __init__(self, message: str, code: int = 2) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class _HTMLSummaryParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._in_title = False
+        self._in_h1 = False
+        self.title_parts: list[str] = []
+        self.h1_parts: list[str] = []
+        self._found_h1 = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lower = tag.lower()
+        if lower == "title":
+            self._in_title = True
+        elif lower == "h1" and not self._found_h1:
+            self._in_h1 = True
+
+    def handle_endtag(self, tag: str) -> None:
+        lower = tag.lower()
+        if lower == "title":
+            self._in_title = False
+        elif lower == "h1" and self._in_h1:
+            self._in_h1 = False
+            self._found_h1 = True
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title_parts.append(data)
+        if self._in_h1:
+            self.h1_parts.append(data)
+
+    @property
+    def title(self) -> str:
+        return " ".join("".join(self.title_parts).split())
+
+    @property
+    def heading(self) -> str:
+        return " ".join("".join(self.h1_parts).split())
+
+
+def extract_html_summary(html_text: str) -> dict[str, str]:
+    parser = _HTMLSummaryParser()
+    try:
+        parser.feed(html_text)
+    except Exception:
+        pass
+    return {"title": parser.title, "heading": parser.heading}
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def mtime_iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def ensure_within_workspace(path: Path) -> Path:
+    """Refuse paths outside WORKSPACE or paths traversing symlinks."""
+    if WORKSPACE.is_symlink():
+        raise Fail("Workspace root must not be a symlink", 5)
+    raw = Path(path)
+    if not raw.is_absolute():
+        raw = WORKSPACE / raw
+    # Check relative parts before resolving symlinks
+    abs_path = Path(os.path.abspath(raw))
+    abs_ws = Path(os.path.abspath(WORKSPACE))
+    if not (abs_path == abs_ws or abs_path.is_relative_to(abs_ws)):
+        raise Fail(f"Refusing path outside Astra workspace: {path}", 5)
+    current = abs_ws
+    for part in abs_path.relative_to(abs_ws).parts:
+        current = current / part
+        if current.is_symlink():
+            raise Fail(f"Refusing symlink inside Astra workspace: {current}", 5)
+    return abs_path
+
+
+def ensure_dirs() -> None:
+    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    for d in (PROJECTS_DIR, STATE_DIR, LOGS_DIR):
+        safe = ensure_within_workspace(d)
+        safe.mkdir(parents=True, exist_ok=True)
+
+
+def normalize_slug(raw: str) -> str:
+    slug = raw.strip().lower().strip("/")
+    if slug.startswith("projects/"):
+        slug = slug[len("projects/"):]
+    slug = re.sub(r"[\s_]+", "-", slug)
+    if not SLUG_RE.fullmatch(slug) or ".." in slug:
+        raise Fail(
+            f"Invalid project name {raw!r}; use lowercase letters, numbers, hyphens (e.g. 'coffee-shop').",
+            2,
+        )
+    return slug
+
+
+def humanize_slug(slug: str) -> str:
+    return " ".join(part.capitalize() for part in re.split(r"[-_.]+", slug) if part)
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    ensure_dirs()
+    safe_path = ensure_within_workspace(path)
+    fd, tmp_name = tempfile.mkstemp(dir=safe_path.parent, prefix=".astra-state-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, safe_path)
+    finally:
+        if os.path.exists(tmp_name):
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+
+
+def load_registry() -> dict[str, Any]:
+    ensure_dirs()
+    safe_path = ensure_within_workspace(REGISTRY_PATH)
+    if not safe_path.exists():
+        return {"active_project": None, "projects": {}, "checks": {}}
+    try:
+        data = json.loads(safe_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Registry root must be an object")
+        data.setdefault("active_project", None)
+        if not isinstance(data.get("projects"), dict):
+            data["projects"] = {}
+        if not isinstance(data.get("checks"), dict):
+            data["checks"] = {}
+        return data
+    except Exception as exc:
+        raise Fail(f"Project registry is malformed: {exc}", 5) from exc
+
+
+def save_registry(registry: dict[str, Any]) -> None:
+    atomic_write_json(REGISTRY_PATH, registry)
+
+
+def inspect_project_dir(slug: str) -> dict[str, Any] | None:
+    proj_dir = ensure_within_workspace(PROJECTS_DIR / slug)
+    if not proj_dir.exists() or not proj_dir.is_dir():
+        return None
+    files: list[str] = []
+    latest_mtime = proj_dir.stat().st_mtime
+    for root, dirs, filenames in os.walk(proj_dir, followlinks=False):
+        root_path = Path(root)
+        dirs[:] = sorted(
+            d for d in dirs
+            if d not in IGNORED_DIRS and not (root_path / d).is_symlink()
+        )
+        for fname in sorted(filenames):
+            if fname in IGNORED_FILES:
+                continue
+            fpath = root_path / fname
+            if fpath.is_symlink() or not fpath.is_file():
+                continue
+            rel = fpath.relative_to(proj_dir).as_posix()
+            files.append(rel)
+            try:
+                mt = fpath.stat().st_mtime
+                if mt > latest_mtime:
+                    latest_mtime = mt
+            except OSError:
+                pass
+
+    html_title = ""
+    html_heading = ""
+    index_candidates = ["index.html", "public/index.html", "src/index.html"]
+    for candidate in index_candidates:
+        cpath = proj_dir / candidate
+        if cpath.is_file() and not cpath.is_symlink():
+            try:
+                summary = extract_html_summary(cpath.read_text(encoding="utf-8", errors="replace"))
+                html_title = summary["title"]
+                html_heading = summary["heading"]
+                break
+            except OSError:
+                pass
+    if not html_title and not html_heading:
+        for rel in files:
+            if rel.endswith(".html"):
+                cpath = proj_dir / rel
+                try:
+                    summary = extract_html_summary(cpath.read_text(encoding="utf-8", errors="replace"))
+                    html_title = summary["title"]
+                    html_heading = summary["heading"]
+                    if html_title or html_heading:
+                        break
+                except OSError:
+                    pass
+
+    return {
+        "slug": slug,
+        "path": f"projects/{slug}",
+        "exists": True,
+        "files": files,
+        "file_count": len(files),
+        "last_modified_at": mtime_iso(latest_mtime),
+        "last_modified_epoch": latest_mtime,
+        "html_title": html_title,
+        "html_heading": html_heading,
+    }
+
+
+def probe_preview(port: int = DEFAULT_PREVIEW_PORT) -> dict[str, Any]:
+    url = f"http://127.0.0.1:{port}"
+    saved: dict[str, Any] = {}
+    if PREVIEW_PATH.exists():
+        try:
+            saved = json.loads(ensure_within_workspace(PREVIEW_PATH).read_text(encoding="utf-8"))
+        except Exception:
+            saved = {}
+
+    status_project = None
+    try:
+        with urllib.request.urlopen(f"{url}/__astra_status__", timeout=1.2) as resp:
+            if resp.status == 200:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+                if isinstance(payload, dict) and payload.get("ok"):
+                    status_project = payload.get("project")
+    except Exception:
+        pass
+
+    try:
+        req = urllib.request.Request(f"{url}/", headers={"Cache-Control": "no-cache"})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            body = resp.read(65536).decode("utf-8", errors="replace")
+            header_project = resp.headers.get("X-Astra-Preview-Project")
+            summary = extract_html_summary(body)
+            serving_project = header_project or status_project or saved.get("project")
+            return {
+                "running": resp.status == 200,
+                "status_code": resp.status,
+                "port": port,
+                "url": url,
+                "project": serving_project,
+                "live_title": summary["title"],
+                "live_heading": summary["heading"],
+                "started_at": saved.get("started_at"),
+            }
+    except Exception as exc:
+        return {
+            "running": False,
+            "status_code": None,
+            "port": port,
+            "url": url,
+            "project": saved.get("project"),
+            "live_title": "",
+            "live_heading": "",
+            "error": str(exc),
+        }
+
+
+def sync_projects_view(registry: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]]]:
+    """Combine registry records with real on-disk directories under projects/."""
+    ensure_dirs()
+    on_disk_slugs: list[str] = []
+    for entry in sorted(PROJECTS_DIR.iterdir()):
+        if entry.is_dir() and not entry.is_symlink() and SLUG_RE.fullmatch(entry.name):
+            on_disk_slugs.append(entry.name)
+
+    all_slugs = list(dict.fromkeys( list(registry.get("projects", {}).keys()) + on_disk_slugs ))
+    combined: list[dict[str, Any]] = []
+
+    for slug in all_slugs:
+        disk = inspect_project_dir(slug)
+        rec = registry.get("projects", {}).get(slug, {})
+        if not disk and not rec:
+            continue
+        if disk is None:
+            # Recorded in registry but directory was removed on disk
+            continue
+        html_title = disk["html_title"]
+        html_heading = disk["html_heading"]
+        name = rec.get("name") or html_title or humanize_slug(slug)
+        description = rec.get("description") or (
+            f"Website project ({html_title})" if html_title else f"Coding project in projects/{slug}"
+        )
+        latest_update = rec.get("latest_update")
+        last_check = rec.get("last_check")
+        # Determine latest activity timestamp from max of disk mtime and recorded update
+        disk_ts = disk["last_modified_at"]
+        rec_ts = (latest_update or {}).get("updated_at") or rec.get("updated_at") or disk_ts
+        last_activity_at = max(disk_ts, rec_ts)
+
+        if not latest_update:
+            if disk["files"]:
+                summary_bits = f"Files on disk: {', '.join(disk['files'][:5])}"
+                if html_title:
+                    summary_bits += f" (title: {html_title})"
+                latest_update = {
+                    "action": "modified_on_disk",
+                    "summary": summary_bits,
+                    "files_changed": disk["files"][:10],
+                    "updated_at": disk_ts,
+                }
+            else:
+                latest_update = {
+                    "action": "initialized",
+                    "summary": "Project directory initialized (no files yet)",
+                    "files_changed": [],
+                    "updated_at": last_activity_at,
+                }
+
+        validation = (
+            {
+                "status": last_check.get("status", "not_run"),
+                "command": last_check.get("command", ""),
+                "exit_code": last_check.get("exit_code"),
+                "checked_at": last_check.get("checked_at"),
+                "check_id": last_check.get("check_id"),
+                "details": last_check.get("details", ""),
+            }
+            if isinstance(last_check, dict)
+            else {
+                "status": "not_run",
+                "command": "",
+                "exit_code": None,
+                "checked_at": None,
+                "check_id": None,
+                "details": "No validation or build check recorded yet",
+            }
+        )
+
+        combined.append(
+            {
+                "slug": slug,
+                "name": name,
+                "description": description,
+                "path": disk["path"],
+                "status": rec.get("status") or ("ready" if disk["files"] else "empty"),
+                "created_at": rec.get("created_at") or disk_ts,
+                "last_modified_at": disk_ts,
+                "last_activity_at": last_activity_at,
+                "files": disk["files"],
+                "file_count": disk["file_count"],
+                "html_title": html_title,
+                "html_heading": html_heading,
+                "latest_update": latest_update,
+                "validation": validation,
+            }
+        )
+
+    combined.sort(key=lambda item: item["last_activity_at"], reverse=True)
+    active_slug = registry.get("active_project")
+    valid_slugs = {item["slug"] for item in combined}
+    if active_slug not in valid_slugs:
+        active_slug = combined[0]["slug"] if combined else None
+    return active_slug, combined
+
+
+# ------------------------------------------------------------ Preview Server --
+def run_preview_server_Loop(project_slug: str, port: int, bind: str) -> None:
+    proj_dir = ensure_within_workspace(PROJECTS_DIR / project_slug)
+    if not proj_dir.is_dir():
+        raise Fail(f"Project directory projects/{project_slug} does not exist")
+    started_at = utc_now_iso()
+
+    class AstraPreviewHandler(SimpleHTTPRequestHandler):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, directory=str(proj_dir), **kwargs)
+
+        def end_headers(self) -> None:
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            self.send_header("X-Astra-Preview-Project", project_slug)
+            super().end_headers()
+
+        def do_GET(self) -> None:
+            if self.path.split("?", 1)[0] == "/__astra_status__":
+                payload = json.dumps(
+                    {
+                        "ok": True,
+                        "project": project_slug,
+                        "port": port,
+                        "pid": os.getpid(),
+                        "started_at": started_at,
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            super().do_GET()
+
+        def do_POST(self) -> None:
+            if self.path.split("?", 1)[0] == "/__astra_stop__":
+                payload = json.dumps({"ok": True, "stopped": project_slug}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+            self.send_error(405, "Method Not Allowed")
+
+        def log_message(self, format: str, *args: Any) -> None:
+            sys.stderr.write(f"[astra-preview:{project_slug}] " + (format % args) + "\n")
+            sys.stderr.flush()
+
+    class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+        allow_reuse_address = True
+
+    with ReusableThreadingHTTPServer((bind, port), AstraPreviewHandler) as httpd:
+        httpd.serve_forever()
+
+
+def stop_preview_server(port: int = DEFAULT_PREVIEW_PORT) -> dict[str, Any]:
+    url = f"http://127.0.0.1:{port}"
+    stopped_via_http = False
+    try:
+        req = urllib.request.Request(f"{url}/__astra_stop__", data=b"{}", method="POST")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            if resp.status == 200:
+                stopped_via_http = True
+    except Exception:
+        pass
+
+    if PREVIEW_PATH.exists():
+        try:
+            saved = json.loads(ensure_within_workspace(PREVIEW_PATH).read_text(encoding="utf-8"))
+            pid = saved.get("pid")
+            if isinstance(pid, int) and pid > 1:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    for _ in range(15):
+        probe = probe_preview(port)
+        if not probe["running"]:
+            break
+        time.sleep(0.1)
+
+    return {"stopped": True, "stopped_via_http": stopped_via_http, "port": port}
+
+
+def start_preview_server(project_slug: str, port: int = DEFAULT_PREVIEW_PORT) -> dict[str, Any]:
+    ensure_dirs()
+    slug = normalize_slug(project_slug)
+    proj_dir = ensure_within_workspace(PROJECTS_DIR / slug)
+    if not proj_dir.is_dir():
+        raise Fail(f"Project directory projects/{slug} does not exist")
+
+    current = probe_preview(port)
+    if current["running"] and current.get("project") == slug:
+        return current
+
+    if current["running"]:
+        stop_preview_server(port)
+
+    log_path = ensure_within_workspace(PREVIEW_LOG)
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "_serve",
+        slug,
+        "--port",
+        str(port),
+        "--bind",
+        DEFAULT_PREVIEW_BIND,
+    ]
+    with open(log_path, "ab") as log_file:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(WORKSPACE),
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+            close_fds=True,
+        )
+
+    atomic_write_json(
+        PREVIEW_PATH,
+        {
+            "project": slug,
+            "port": port,
+            "url": f"http://127.0.0.1:{port}",
+            "pid": proc.pid,
+            "started_at": utc_now_iso(),
+        },
+    )
+
+    for _ in range(25):
+        probe = probe_preview(port)
+        if probe["running"]:
+            return probe
+        time.sleep(0.1)
+
+    raise Fail(
+        f"Preview server for {slug} on port {port} did not become ready; inspect logs/preview.log.",
+        3,
+    )
+
+
+# ----------------------------------------------------------------- Commands --
+def cmd_status(args: argparse.Namespace) -> None:
+    registry = load_registry()
+    active_slug, projects = sync_projects_view(registry)
+    preview = probe_preview(DEFAULT_PREVIEW_PORT)
+    active = next((p for p in projects if p["slug"] == active_slug), None)
+    if active is not None:
+        active = dict(active)
+        active["preview"] = {
+            "running": bool(preview["running"] and preview.get("project") == active["slug"]),
+            "url": preview["url"] if (preview["running"] and preview.get("project") == active["slug"]) else None,
+            "live_title": preview.get("live_title", "") if preview.get("project") == active["slug"] else "",
+            "live_heading": preview.get("live_heading", "") if preview.get("project") == active["slug"] else "",
+        }
+    payload = {
+        "workspace": "astra-workspace",
+        "active_project": active,
+        "project_count": len(projects),
+        "preview": preview,
+        "complete": True,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    if not active:
+        print("No active coding project in astra-workspace yet.")
+        return
+    print(f"Active project: {active['name']} ({active['path']})")
+    print(f"Status: {active['status']} | Files: {active['file_count']} | Last activity: {active['last_activity_at']}")
+    if active.get("html_title"):
+        print(f"HTML Title: {active['html_title']} | Heading: {active.get('html_heading') or '(none)'}")
+    if preview["running"]:
+        print(f"Preview: running at {preview['url']} (project: {preview.get('project')})")
+    else:
+        print("Preview: not running")
+
+
+def cmd_recent(args: argparse.Namespace) -> None:
+    registry = load_registry()
+    active_slug, projects = sync_projects_view(registry)
+    preview = probe_preview(DEFAULT_PREVIEW_PORT)
+    limit = max(1, min(int(args.limit), 20))
+    items = []
+    for p in projects[:limit]:
+        items.append(
+            {
+                "slug": p["slug"],
+                "name": p["name"],
+                "description": p["description"],
+                "path": p["path"],
+                "is_active_project": p["slug"] == active_slug,
+                "status": p["status"],
+                "file_count": p["file_count"],
+                "html_title": p["html_title"],
+                "html_heading": p["html_heading"],
+                "last_modified_at": p["last_modified_at"],
+                "last_activity_at": p["last_activity_at"],
+                "latest_update": p["latest_update"],
+                "validation_status": p["validation"]["status"],
+                "preview_running": bool(preview["running"] and preview.get("project") == p["slug"]),
+                "preview_url": preview["url"] if (preview["running"] and preview.get("project") == p["slug"]) else None,
+            }
+        )
+    payload = {
+        "active_project_slug": active_slug,
+        "projects": items,
+        "count": len(items),
+        "total_projects": len(projects),
+        "complete": True,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    if not items:
+        print("No projects in astra-workspace yet.")
+        return
+    for item in items:
+        marker = "*" if item["is_active_project"] else "-"
+        print(f"{marker} {item['name']} ({item['path']}) — {item['latest_update']['summary']}")
+
+
+def cmd_latest_update(args: argparse.Namespace) -> None:
+    registry = load_registry()
+    active_slug, projects = sync_projects_view(registry)
+    target_slug = normalize_slug(args.project) if args.project else active_slug
+    target = next((p for p in projects if p["slug"] == target_slug), None)
+    preview = probe_preview(DEFAULT_PREVIEW_PORT)
+    if target is None:
+        payload = {
+            "project": None,
+            "has_update": False,
+            "summary": "No coding project or update recorded yet.",
+            "files_changed": [],
+            "validation": {"status": "not_run", "exit_code": None, "command": "", "checked_at": None},
+            "preview": preview,
+            "complete": True,
+        }
+    else:
+        upd = target["latest_update"]
+        preview_for_target = bool(preview["running"] and preview.get("project") == target["slug"])
+        payload = {
+            "project": target["slug"],
+            "name": target["name"],
+            "path": target["path"],
+            "has_update": True,
+            "action": upd.get("action", "updated"),
+            "summary": upd.get("summary", ""),
+            "files_changed": upd.get("files_changed", []),
+            "updated_at": upd.get("updated_at") or target["last_activity_at"],
+            "html_title": target["html_title"],
+            "html_heading": target["html_heading"],
+            "validation": target["validation"],
+            "preview": {
+                "running": preview_for_target,
+                "url": preview["url"] if preview_for_target else None,
+                "live_title": preview.get("live_title", "") if preview_for_target else "",
+                "live_heading": preview.get("live_heading", "") if preview_for_target else "",
+            },
+            "complete": True,
+        }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    if not payload["project"]:
+        print(payload["summary"])
+        return
+    print(f"Latest update for {payload['name']} ({payload['path']}): {payload['summary']}")
+    print(f"Validation: {payload['validation']['status']}")
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    ensure_dirs()
+    slug = normalize_slug(args.project)
+    proj_dir = ensure_within_workspace(PROJECTS_DIR / slug)
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    registry = load_registry()
+    now = utc_now_iso()
+    existing = registry["projects"].get(slug, {})
+    name = (args.name or existing.get("name") or humanize_slug(slug)).strip()
+    description = (
+        args.description
+        or existing.get("description")
+        or f"Coding project {name}"
+    ).strip()
+    registry["projects"][slug] = {
+        "slug": slug,
+        "name": name,
+        "description": description,
+        "path": f"projects/{slug}",
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+        "status": existing.get("status") or "in_progress",
+        "latest_update": existing.get("latest_update")
+        or {
+            "action": "created",
+            "summary": f"Initialized project {name} in projects/{slug}",
+            "files_changed": [],
+            "updated_at": now,
+        },
+        "last_check": existing.get("last_check"),
+    }
+    registry["active_project"] = slug
+    save_registry(registry)
+    out = {
+        "ok": True,
+        "slug": slug,
+        "name": name,
+        "description": description,
+        "path": f"projects/{slug}",
+        "abs_path": str(proj_dir),
+    }
+    if args.json:
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+    else:
+        print(f"Initialized active project {name} at projects/{slug}")
+
+
+def cmd_record_update(args: argparse.Namespace) -> None:
+    registry = load_registry()
+    slug = normalize_slug(args.project)
+    disk = inspect_project_dir(slug)
+    if disk is None:
+        raise Fail(f"Project directory projects/{slug} does not exist")
+    requested_files = [
+        f.strip() for f in (args.files or "").split(",") if f.strip()
+    ]
+    if requested_files:
+        for rel in requested_files:
+            fpath = ensure_within_workspace(PROJECTS_DIR / slug / rel)
+            if not fpath.is_file():
+                raise Fail(f"Recorded file does not exist in projects/{slug}: {rel}")
+    else:
+        requested_files = disk["files"][:10]
+
+    now = utc_now_iso()
+    existing = registry["projects"].get(slug, {})
+    name = args.name or existing.get("name") or disk["html_title"] or humanize_slug(slug)
+    description = (
+        args.description
+        or existing.get("description")
+        or (f"Website project ({disk['html_title']})" if disk["html_title"] else f"Coding project {name}")
+    )
+    update_entry = {
+        "action": args.action,
+        "summary": args.summary.strip(),
+        "files_changed": requested_files,
+        "updated_at": now,
+    }
+    registry["projects"][slug] = {
+        "slug": slug,
+        "name": name,
+        "description": description,
+        "path": f"projects/{slug}",
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+        "status": "ready",
+        "latest_update": update_entry,
+        "last_check": existing.get("last_check"),
+    }
+    registry["active_project"] = slug
+    save_registry(registry)
+    out = {
+        "ok": True,
+        "project": slug,
+        "name": name,
+        "path": f"projects/{slug}",
+        "latest_update": update_entry,
+        "html_title": disk["html_title"],
+        "html_heading": disk["html_heading"],
+    }
+    if args.json:
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+    else:
+        print(f"Recorded update for {slug}: {args.summary}")
+
+
+def cmd_check(args: argparse.Namespace) -> None:
+    registry = load_registry()
+    active_slug, _ = sync_projects_view(registry)
+    slug = normalize_slug(args.project) if args.project else active_slug
+    if not slug:
+        raise Fail("No project specified and no active project found")
+    disk = inspect_project_dir(slug)
+    if disk is None:
+        raise Fail(f"Project directory projects/{slug} does not exist")
+    if not disk["files"]:
+        raise Fail(f"Project directory projects/{slug} has no files to validate")
+
+    proj_dir = ensure_within_workspace(PROJECTS_DIR / slug)
+    requested_files = [f.strip() for f in (args.files or "").split(",") if f.strip()]
+    if requested_files:
+        for rel in requested_files:
+            fpath = ensure_within_workspace(proj_dir / rel)
+            if not fpath.is_file() or fpath.stat().st_size == 0:
+                raise Fail(f"File {rel} is missing or empty in projects/{slug}")
+    else:
+        requested_files = disk["files"][:10]
+
+    # Built-in static / HTML validation
+    validation_notes: list[str] = []
+    exit_code = 0
+    command_desc = "built-in static & HTML validation"
+
+    index_file = proj_dir / "index.html"
+    if index_file.is_file():
+        content = index_file.read_text(encoding="utf-8", errors="replace").strip()
+        if not content:
+            raise Fail(f"projects/{slug}/index.html is empty")
+        if "<" not in content or ">" not in content:
+            raise Fail(f"projects/{slug}/index.html does not contain valid HTML markup")
+        validation_notes.append(
+            f"index.html valid (title={disk['html_title']!r}, h1={disk['html_heading']!r})"
+        )
+
+    # Optional shell build/test command
+    cmd_stdout = ""
+    cmd_stderr = ""
+    if args.command:
+        command_desc = args.command
+        try:
+            proc = subprocess.run(
+                args.command,
+                shell=True,
+                cwd=str(proj_dir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            exit_code = proc.returncode
+            cmd_stdout = proc.stdout.strip()[:500]
+            cmd_stderr = proc.stderr.strip()[:500]
+            if exit_code == 0:
+                validation_notes.append(f"Command {args.command!r} passed (exit 0)")
+            else:
+                validation_notes.append(f"Command {args.command!r} failed (exit {exit_code})")
+        except subprocess.TimeoutExpired as exc:
+            raise Fail(f"Validation command timed out: {args.command}", 3) from exc
+
+    preview_info = probe_preview(args.port)
+    if args.start_preview or (preview_info["running"] and preview_info.get("project") == slug):
+        if exit_code == 0:
+            preview_info = start_preview_server(slug, args.port)
+            validation_notes.append(f"Preview verified at {preview_info['url']}")
+
+    now = utc_now_iso()
+    check_id = "chk-" + secrets.token_hex(6)
+    status_str = "passed" if exit_code == 0 else "failed"
+    check_record = {
+        "check_id": check_id,
+        "project": slug,
+        "status": status_str,
+        "command": command_desc,
+        "exit_code": exit_code,
+        "files": requested_files,
+        "title": disk["html_title"],
+        "heading": disk["html_heading"],
+        "preview_url": preview_info["url"] if preview_info.get("running") else "",
+        "preview_running": bool(preview_info.get("running")),
+        "details": "; ".join(validation_notes),
+        "stdout": cmd_stdout,
+        "stderr": cmd_stderr,
+        "checked_at": now,
+    }
+    registry["checks"][check_id] = check_record
+
+    existing = registry["projects"].get(slug, {})
+    name = args.name or existing.get("name") or disk["html_title"] or humanize_slug(slug)
+    description = (
+        args.description
+        or existing.get("description")
+        or (f"Website project ({disk['html_title']})" if disk["html_title"] else f"Coding project {name}")
+    )
+    summary = (
+        args.summary
+        or (
+            f"Validated {name} ({', '.join(requested_files[:4])})"
+            + (f" — title '{disk['html_title']}'" if disk["html_title"] else "")
+        )
+    )
+    action = args.action or ("created" if not existing else "updated")
+    registry["projects"][slug] = {
+        "slug": slug,
+        "name": name,
+        "description": description,
+        "path": f"projects/{slug}",
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+        "status": "ready" if exit_code == 0 else "check_failed",
+        "latest_update": {
+            "action": action,
+            "summary": summary,
+            "files_changed": requested_files,
+            "updated_at": now,
+            "check_id": check_id,
+        },
+        "last_check": check_record,
+    }
+    registry["active_project"] = slug
+    save_registry(registry)
+
+    receipt_change = {
+        "type": "coding_change",
+        "action": action,
+        "project": slug,
+        "files": ",".join(requested_files),
+        "check_id": check_id,
+    }
+    if disk["html_title"]:
+        receipt_change["title"] = disk["html_title"]
+    if disk["html_heading"]:
+        receipt_change["heading"] = disk["html_heading"]
+    if preview_info.get("running"):
+        receipt_change["preview_url"] = preview_info["url"]
+
+    out = {
+        "ok": exit_code == 0,
+        "check_id": check_id,
+        "project": slug,
+        "name": name,
+        "path": f"projects/{slug}",
+        "status": status_str,
+        "exit_code": exit_code,
+        "files": requested_files,
+        "html_title": disk["html_title"],
+        "html_heading": disk["html_heading"],
+        "preview": preview_info,
+        "details": "; ".join(validation_notes),
+        "receipt_change": receipt_change,
+    }
+    if args.json:
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+    else:
+        print(f"Check {check_id} ({status_str}) for {slug}: {out['details']}")
+        print("Receipt change JSON:", json.dumps(receipt_change))
+    if exit_code != 0:
+        sys.exit(1)
+
+
+def cmd_preview(args: argparse.Namespace) -> None:
+    registry = load_registry()
+    active_slug, _ = sync_projects_view(registry)
+    if args.subaction == "status":
+        info = probe_preview(args.port)
+        if args.json:
+            print(json.dumps(info, indent=2, ensure_ascii=False))
+        else:
+            if info["running"]:
+                print(f"Preview running at {info['url']} for project {info.get('project')}")
+            else:
+                print(f"Preview is not running on port {args.port}")
+        return
+    if args.subaction == "stop":
+        info = stop_preview_server(args.port)
+        if args.json:
+            print(json.dumps(info, indent=2, ensure_ascii=False))
+        else:
+            print(f"Stopped preview server on port {args.port}")
+        return
+    if args.subaction == "start":
+        slug = normalize_slug(args.project) if args.project else active_slug
+        if not slug:
+            raise Fail("Specify a project slug to preview")
+        info = start_preview_server(slug, args.port)
+        if args.json:
+            print(json.dumps(info, indent=2, ensure_ascii=False))
+        else:
+            print(f"Preview server started at {info['url']} for projects/{slug}")
+        return
+
+
+def cmd_verify(args: argparse.Namespace) -> None:
+    """Independent read-back verification for ClawVoice coding receipts."""
+    registry = load_registry()
+    active_slug, _ = sync_projects_view(registry)
+    raw_project = args.project or active_slug or ""
+    if not raw_project:
+        print(json.dumps({"verified": False, "reason": "No project specified in receipt or workspace"}))
+        return
+    try:
+        slug = normalize_slug(raw_project)
+    except Fail as exc:
+        print(json.dumps({"verified": False, "reason": str(exc)}))
+        return
+
+    disk = inspect_project_dir(slug)
+    if disk is None or not disk["files"]:
+        print(
+            json.dumps(
+                {
+                    "verified": False,
+                    "project": slug,
+                    "reason": f"Project directory projects/{slug} does not exist or has no files on disk",
+                }
+            )
+        )
+        return
+
+    proj_dir = ensure_within_workspace(PROJECTS_DIR / slug)
+    requested_files = [f.strip() for f in (args.files or "").split(",") if f.strip()]
+    verified_files: list[str] = []
+    if requested_files:
+        for rel in requested_files:
+            rel_clean = rel.strip()
+            if rel_clean.startswith(f"projects/{slug}/"):
+                rel_clean = rel_clean[len(f"projects/{slug}/"):]
+            try:
+                fpath = ensure_within_workspace(proj_dir / rel_clean)
+            except Fail as exc:
+                print(json.dumps({"verified": False, "project": slug, "reason": str(exc)}))
+                return
+            if not fpath.is_file() or fpath.stat().st_size == 0:
+                print(
+                    json.dumps(
+                        {
+                            "verified": False,
+                            "project": slug,
+                            "reason": f"Reported file {rel_clean!r} is missing or empty in projects/{slug}",
+                        }
+                    )
+                )
+                return
+            verified_files.append(rel_clean)
+    else:
+        verified_files = disk["files"][:10]
+
+    # Verify expected title / heading / text in actual files on disk
+    if args.expect_title:
+        expected_t = args.expect_title.strip()
+        if disk["html_title"].casefold() != expected_t.casefold() and expected_t.casefold() not in disk["html_title"].casefold():
+            print(
+                json.dumps(
+                    {
+                        "verified": False,
+                        "project": slug,
+                        "reason": f"Expected HTML <title> {expected_t!r}, but on-disk <title> is {disk['html_title']!r}",
+                    }
+                )
+            )
+            return
+
+    if args.expect_heading:
+        expected_h = args.expect_heading.strip()
+        if disk["html_heading"].casefold() != expected_h.casefold() and expected_h.casefold() not in disk["html_heading"].casefold():
+            # Also check if the heading text appears anywhere in HTML files
+            found_in_html = False
+            for rel in verified_files:
+                if rel.endswith(".html"):
+                    text = (proj_dir / rel).read_text(encoding="utf-8", errors="replace")
+                    if expected_h.casefold() in text.casefold():
+                        found_in_html = True
+                        break
+            if not found_in_html:
+                print(
+                    json.dumps(
+                        {
+                            "verified": False,
+                            "project": slug,
+                            "reason": f"Expected heading {expected_h!r}, but on-disk heading is {disk['html_heading']!r}",
+                        }
+                    )
+                )
+                return
+
+    if args.expect_text:
+        needle = args.expect_text.strip().casefold()
+        found_text = False
+        for rel in verified_files or disk["files"]:
+            fpath = proj_dir / rel
+            try:
+                if needle in fpath.read_text(encoding="utf-8", errors="replace").casefold():
+                    found_text = True
+                    break
+            except OSError:
+                pass
+        if not found_text:
+            print(
+                json.dumps(
+                    {
+                        "verified": False,
+                        "project": slug,
+                        "reason": f"Expected text {args.expect_text!r} was not found in project files",
+                    }
+                )
+            )
+            return
+
+    # Verify check_id if provided
+    check_record = None
+    if args.check_id:
+        check_record = registry.get("checks", {}).get(args.check_id)
+        if not isinstance(check_record, dict):
+            print(
+                json.dumps(
+                    {
+                        "verified": False,
+                        "project": slug,
+                        "reason": f"Check ID {args.check_id!r} was not found in project registry",
+                    }
+                )
+            )
+            return
+        if check_record.get("exit_code", 1) != 0 or check_record.get("status") != "passed":
+            print(
+                json.dumps(
+                    {
+                        "verified": False,
+                        "project": slug,
+                        "reason": f"Check {args.check_id!r} did not pass (status={check_record.get('status')!r}, exit={check_record.get('exit_code')})",
+                    }
+                )
+            )
+            return
+
+    # Check local preview if claimed or required
+    preview = probe_preview(DEFAULT_PREVIEW_PORT)
+    preview_claimed = bool(args.require_preview or args.preview_url)
+    preview_verified = False
+    preview_note = ""
+    if preview["running"] and (preview.get("project") in (None, slug)):
+        preview_verified = True
+        if args.expect_title and preview.get("live_title"):
+            if args.expect_title.strip().casefold() not in preview["live_title"].casefold():
+                print(
+                    json.dumps(
+                        {
+                            "verified": False,
+                            "project": slug,
+                            "reason": f"Live preview <title> is {preview['live_title']!r}, expected {args.expect_title!r}",
+                        }
+                    )
+                )
+                return
+        if args.expect_heading and preview.get("live_heading"):
+            if args.expect_heading.strip().casefold() not in preview["live_heading"].casefold():
+                print(
+                    json.dumps(
+                        {
+                            "verified": False,
+                            "project": slug,
+                            "reason": f"Live preview <h1> is {preview['live_heading']!r}, expected {args.expect_heading!r}",
+                        }
+                    )
+                )
+                return
+        preview_note = f"Preview verified at {preview['url']}"
+    elif preview_claimed:
+        print(
+            json.dumps(
+                {
+                    "verified": False,
+                    "project": slug,
+                    "reason": f"Local preview at {preview['url']} was claimed but is not reachable or serving {slug}",
+                }
+            )
+        )
+        return
+    else:
+        preview_note = "Preview server not currently running"
+
+    # Ensure the verified project/files are recorded in registry.json so cache reads see them immediately
+    now = utc_now_iso()
+    existing = registry["projects"].get(slug, {})
+    name = existing.get("name") or disk["html_title"] or humanize_slug(slug)
+    description = existing.get("description") or (
+        f"Website project ({disk['html_title']})" if disk["html_title"] else f"Coding project {name}"
+    )
+    action = args.action or ("updated" if existing else "created")
+    summary_parts = [f"{action.capitalize()} {name} ({', '.join(verified_files[:4])})"]
+    if disk["html_title"]:
+        summary_parts.append(f"title: {disk['html_title']}")
+    if disk["html_heading"] and disk["html_heading"] != disk["html_title"]:
+        summary_parts.append(f"heading: {disk['html_heading']}")
+    auto_summary = " — ".join(summary_parts)
+
+    existing_upd = existing.get("latest_update") or {}
+    if not existing_upd or existing_upd.get("updated_at", "") < disk["last_modified_at"]:
+        latest_update = {
+            "action": action,
+            "summary": auto_summary,
+            "files_changed": verified_files,
+            "updated_at": now,
+            "check_id": args.check_id or existing_upd.get("check_id"),
+        }
+    else:
+        latest_update = existing_upd
+
+    registry["projects"][slug] = {
+        "slug": slug,
+        "name": name,
+        "description": description,
+        "path": f"projects/{slug}",
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+        "status": "ready",
+        "latest_update": latest_update,
+        "last_check": check_record or existing.get("last_check"),
+    }
+    registry["active_project"] = slug
+    save_registry(registry)
+
+    print(
+        json.dumps(
+            {
+                "verified": True,
+                "project": slug,
+                "name": name,
+                "path": f"projects/{slug}",
+                "action": action,
+                "files": verified_files,
+                "html_title": disk["html_title"],
+                "html_heading": disk["html_heading"],
+                "check_id": args.check_id or (existing.get("last_check") or {}).get("check_id"),
+                "preview_verified": preview_verified,
+                "preview_url": preview["url"] if preview_verified else None,
+                "preview_note": preview_note,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
+
+def configure_workspace(path: str | Path) -> None:
+    global WORKSPACE, PROJECTS_DIR, STATE_DIR, LOGS_DIR, REGISTRY_PATH, PREVIEW_PATH, PREVIEW_LOG
+    WORKSPACE = Path(path).resolve()
+    PROJECTS_DIR = WORKSPACE / "projects"
+    STATE_DIR = WORKSPACE / "project-state"
+    LOGS_DIR = WORKSPACE / "logs"
+    REGISTRY_PATH = STATE_DIR / "registry.json"
+    PREVIEW_PATH = STATE_DIR / "preview.json"
+    PREVIEW_LOG = LOGS_DIR / "preview.log"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="astra-project", description=__doc__)
+    parser.add_argument("--workspace", default="", help="Override workspace directory")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_status = sub.add_parser("status")
+    p_status.add_argument("--json", action="store_true")
+    p_status.set_defaults(fn=cmd_status)
+
+    p_recent = sub.add_parser("recent")
+    p_recent.add_argument("--limit", type=int, default=5)
+    p_recent.add_argument("--json", action="store_true")
+    p_recent.set_defaults(fn=cmd_recent)
+
+    p_latest = sub.add_parser("latest-update")
+    p_latest.add_argument("--project", default="")
+    p_latest.add_argument("--json", action="store_true")
+    p_latest.set_defaults(fn=cmd_latest_update)
+
+    p_init = sub.add_parser("init")
+    p_init.add_argument("project")
+    p_init.add_argument("--name", default="")
+    p_init.add_argument("--description", default="")
+    p_init.add_argument("--json", action="store_true")
+    p_init.set_defaults(fn=cmd_init)
+
+    p_rec = sub.add_parser("record-update")
+    p_rec.add_argument("project")
+    p_rec.add_argument("--action", default="updated")
+    p_rec.add_argument("--summary", required=True)
+    p_rec.add_argument("--files", default="")
+    p_rec.add_argument("--name", default="")
+    p_rec.add_argument("--description", default="")
+    p_rec.add_argument("--json", action="store_true")
+    p_rec.set_defaults(fn=cmd_record_update)
+
+    p_check = sub.add_parser("check")
+    p_check.add_argument("project", nargs="?", default="")
+    p_check.add_argument("--command", default="")
+    p_check.add_argument("--start-preview", action="store_true")
+    p_check.add_argument("--port", type=int, default=DEFAULT_PREVIEW_PORT)
+    p_check.add_argument("--action", default="")
+    p_check.add_argument("--summary", default="")
+    p_check.add_argument("--files", default="")
+    p_check.add_argument("--name", default="")
+    p_check.add_argument("--description", default="")
+    p_check.add_argument("--json", action="store_true")
+    p_check.set_defaults(fn=cmd_check)
+
+    p_prev = sub.add_parser("preview")
+    p_prev.add_argument("subaction", choices=("start", "stop", "status"))
+    p_prev.add_argument("project", nargs="?", default="")
+    p_prev.add_argument("--port", type=int, default=DEFAULT_PREVIEW_PORT)
+    p_prev.add_argument("--json", action="store_true")
+    p_prev.set_defaults(fn=cmd_preview)
+
+    p_ver = sub.add_parser("verify")
+    p_ver.add_argument("--project", default="")
+    p_ver.add_argument("--action", default="updated")
+    p_ver.add_argument("--files", default="")
+    p_ver.add_argument("--check-id", default="")
+    p_ver.add_argument("--expect-title", default="")
+    p_ver.add_argument("--expect-heading", default="")
+    p_ver.add_argument("--expect-text", default="")
+    p_ver.add_argument("--preview-url", default="")
+    p_ver.add_argument("--require-preview", action="store_true")
+    p_ver.add_argument("--json", action="store_true")
+    p_ver.set_defaults(fn=cmd_verify)
+
+    p_serve = sub.add_parser("_serve")
+    p_serve.add_argument("project")
+    p_serve.add_argument("--port", type=int, default=DEFAULT_PREVIEW_PORT)
+    p_serve.add_argument("--bind", default=DEFAULT_PREVIEW_BIND)
+
+    args = parser.parse_args()
+    if args.workspace:
+        configure_workspace(args.workspace)
+    if args.cmd == "_serve":
+        run_preview_server_Loop(normalize_slug(args.project), args.port, args.bind)
+        return 0
+    try:
+        args.fn(args)
+        return 0
+    except Fail as exc:
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        else:
+            print(f"astra-project: {exc}", file=sys.stderr)
+        return exc.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

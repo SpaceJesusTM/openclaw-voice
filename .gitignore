@@ -13,7 +13,10 @@ build/
 coverage/
 captures/
 .local/
+.local-astra/
+astra-workspace/
 infra/openclaw/workspace/planner/
+infra/openclaw/.local-astra/
 .DS_Store
 *.log
 
