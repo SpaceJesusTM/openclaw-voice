@@ -6,7 +6,7 @@ jobs. One local process; the browser UI is in [`apps/web`](../../apps/web).
 
 ```sh
 make setup     # first time (uv 0.13.5, locked Python 3.11 environment)
-make dev       # http://127.0.0.1:7860  (needs the infra/openclaw demo running)
+make dev       # http://127.0.0.1:7860  (Tari and Astra need their OpenClaw containers running)
 make check     # offline tests, Ruff, compile
 ```
 
@@ -15,7 +15,8 @@ Full guide: [docs/voice.md](../../docs/voice.md) · Results:
 
 | Path | Contents |
 | --- | --- |
-| `agents/` | Agent configurations (`team.yaml`, `tari.yaml` live, `astra.yaml` fixture) and role Markdown |
+| `agents/` | Agent configurations (`team.yaml`; `tari.yaml` and `astra.yaml` OpenClaw agents, `jester.yaml` voice-only, `fixture.yaml` offline tests) and role Markdown |
+| `clawvoice/team/` | Team mode: room, Higgs overseer, per-agent voices, speaking floor, name addressing |
 | `clawvoice/bot.py`, `server.py`, `runtime.py` | Voice pipeline per connection, local server/API, process-level runtime |
 | `clawvoice/voice/` | Verified Boson service, typed-input bridge, tools, instructions, speaking floor |
 | `clawvoice/openclaw/` | Generic agent adapter: WebSocket (paired device) and HTTP Gateway transports |
