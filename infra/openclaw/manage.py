@@ -28,7 +28,7 @@ DEFAULT_PORT = 18939
 def owned_path(path: Path) -> Path:
     """Refuse symlinks throughout any local installation-owned path."""
     path = Path(path)
-    if not path.is_relative_to(ROOT):
+    if not path.is_relative_to(ROOT) or ".." in path.relative_to(ROOT).parts:
         raise RuntimeError("Refusing path outside this ClawVoice checkout")
     current = ROOT
     for part in path.relative_to(ROOT).parts:
@@ -40,8 +40,11 @@ def owned_path(path: Path) -> Path:
 
 def private_dir(path: Path) -> None:
     path = owned_path(path)
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.chmod(0o700)
+    current = ROOT
+    for part in path.relative_to(ROOT).parts:
+        current = current / part
+        current.mkdir(exist_ok=True, mode=0o700)
+        current.chmod(0o700)
 
 
 def write_if_absent(path: Path, data: str, mode: int = 0o600) -> None:
@@ -50,13 +53,14 @@ def write_if_absent(path: Path, data: str, mode: int = 0o600) -> None:
     if path.exists():
         if not path.is_file():
             raise RuntimeError("Expected an ordinary private file")
+        path.chmod(mode)
         return
-    with path.open("x", encoding="utf-8") as handle:
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, mode)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(data)
-    path.chmod(mode)
 
 
-def load_env() -> dict[str, str]:
+def load_env(enforce_policy: bool = True) -> dict[str, str]:
     path = owned_path(LOCAL / "runtime.env")
     if not path.is_file():
         raise RuntimeError("Missing local configuration. Run 'init' first.")
@@ -75,10 +79,45 @@ def load_env() -> dict[str, str]:
     port = int(data.get("CLAWVOICE_OPENCLAW_PORT", DEFAULT_PORT))
     if port < 1024 or port > 65535:
         raise RuntimeError("Invalid local Gateway port")
+    if not enforce_policy:
+        return data
+    if data.get("CLAWVOICE_MODEL") != DEFAULT_MODEL:
+        raise RuntimeError("Foundation requires openai/gpt-6.1-sol; no substitute model is enabled")
+    if data.get("TARI_CALENDAR_WRITES") != "0":
+        raise RuntimeError("Calendar writes must remain disabled in foundation stage")
+    if any(value for key, value in data.items() if key.endswith("API_KEY") or key in (
+            "OPENAI_ACCESS_TOKEN", "GOG_ACCESS_TOKEN", "GOG_AUTH_MODE")):
+        raise RuntimeError("Use isolated OAuth credentials; API keys and direct tokens are disabled")
+    for key in ("OPENCLAW_GATEWAY_TOKEN", "GOG_KEYRING_PASSWORD"):
+        if not re.fullmatch(r"[a-f0-9]{64}", data.get(key, "")):
+            raise RuntimeError("Missing or invalid generated private credential")
     return data
 
 
+def validate_policy() -> None:
+    """Check the installed config too: runtime.env alone does not select a model."""
+    load_env()
+    config = json.loads(owned_path(LOCAL / "state/openclaw.json").read_text())
+    defaults = config["agents"]["defaults"]
+    if defaults["model"] != {"primary": DEFAULT_MODEL, "fallbacks": []}:
+        raise RuntimeError("Installed model must be GPT-6.1 Sol with no fallbacks")
+    entry = config["agents"]["entries"]
+    if set(entry) != {"tari"} or "model" in entry["tari"]:
+        raise RuntimeError("Foundation requires one agent without model overrides")
+    if defaults.get("utilityModel") != DEFAULT_MODEL or entry["tari"].get("modelPolicy") != {"allow": [DEFAULT_MODEL]}:
+        raise RuntimeError("Utility calls and session overrides must stay on GPT-6.1 Sol")
+    if defaults.get("models", {}).get(DEFAULT_MODEL, {}).get("agentRuntime") != {"id": "openclaw"}:
+        raise RuntimeError("Foundation requires the embedded OpenClaw OAuth runtime")
+    auth = config.get("auth", {})
+    profile = auth.get("profiles", {}).get("openai:clawvoice", {})
+    if (auth.get("order", {}).get("openai") != ["openai:clawvoice"] or
+            profile.get("provider") != "openai" or profile.get("mode") != "oauth"):
+        raise RuntimeError("Foundation requires the dedicated subscription OAuth profile")
+
+
 def initialize(timezone: str, name: str, port: int) -> None:
+    if os.getuid() == 0:
+        raise RuntimeError("Run init as your normal non-root Docker user")
     try:
         ZoneInfo(timezone)
     except (ValueError, ZoneInfoNotFoundError):
@@ -102,7 +141,6 @@ def initialize(timezone: str, name: str, port: int) -> None:
         "TARI_CALENDAR_WRITES": "0",              # strictly read-only for this milestone
         "OPENCLAW_GATEWAY_TOKEN": secrets.token_hex(32),
         "GOG_KEYRING_PASSWORD": secrets.token_hex(32),
-        "OPENAI_API_KEY": "",                     # leave blank for ChatGPT/Codex OAuth
     }
     env_text = "# Private ClawVoice demo runtime. Never commit or share.\n"
     env_text += "".join(f"{key}={value}\n" for key, value in values.items())
@@ -139,11 +177,12 @@ def initialize(timezone: str, name: str, port: int) -> None:
 
 
 def compose_args(*command: str) -> tuple[list[str], dict[str, str]]:
-    data = load_env()
+    # An unsafe configuration must never prevent stopping its own container.
+    data = load_env(enforce_policy=not command or command[0] != "stop")
     # Do not inherit production OpenClaw, Tari, Google or other model credentials.
     process_env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("COMPOSE_", "OPENCLAW_", "TARI_", "GOG_",
-                                        "CLAWVOICE_", "OPENAI_", "BOSON_"))}
+                                        "CLAWVOICE_", "OPENAI_", "BOSON_", "CODEX_"))}
     process_env.update(data)
     cmd = [
         "docker", "compose", "--project-directory", str(ROOT),
@@ -159,7 +198,42 @@ def run_compose(*args: str) -> int:
     return subprocess.call(cmd, cwd=ROOT, env=env)
 
 
+def check_gateway() -> None:
+    data = load_env()
+    base = f"http://127.0.0.1:{data['CLAWVOICE_OPENCLAW_PORT']}"
+    try:
+        with urllib.request.urlopen(base + "/healthz", timeout=10) as response:
+            if response.status != 200:
+                raise RuntimeError("Gateway health check failed")
+        # A session key and agent selector must never substitute for auth.
+        request = urllib.request.Request(
+            base + "/v1/chat/completions",
+            data=json.dumps({"model": "openclaw/tari", "user": "unauthenticated-check",
+                             "messages": [{"role": "user", "content": "auth boundary check"}]}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=10):
+                raise RuntimeError("Gateway accepted a request without authentication")
+        except urllib.error.HTTPError as error:
+            if error.code != 401:
+                raise RuntimeError("Gateway authentication boundary check failed") from None
+        request = urllib.request.Request(
+            base + "/v1/chat/completions", data=b"{}",
+            headers={"Content-Type": "application/json",
+                     "Authorization": "Bearer " + data["OPENCLAW_GATEWAY_TOKEN"]}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=10):
+                raise RuntimeError("Gateway accepted an invalid chat request")
+        except urllib.error.HTTPError as error:
+            if error.code != 400:
+                raise RuntimeError("Authenticated Gateway route check failed") from None
+    except (urllib.error.URLError, TimeoutError):
+        raise RuntimeError("Local Gateway is unavailable") from None
+    print("Gateway health, auth rejection, and authenticated route: passed", flush=True)
+
+
 def chat(prompt: str, conversation: str) -> None:
+    validate_policy()
     data = load_env()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", conversation):
         raise RuntimeError("Use a short opaque conversation ID")
@@ -182,7 +256,13 @@ def chat(prompt: str, conversation: str) -> None:
         raise RuntimeError(f"Gateway returned HTTP {exc.code}; check local model auth and logs") from None
     except (urllib.error.URLError, TimeoutError) as exc:
         raise RuntimeError("Gateway not reachable or request timed out; outcome may be unknown") from None
-    print(result["choices"][0]["message"]["content"])
+    try:
+        content = result["choices"][0]["message"]["content"]
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError()
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise RuntimeError("Gateway returned no verifiable assistant response") from None
+    print(content)
 
 
 def main() -> int:
@@ -193,7 +273,7 @@ def main() -> int:
     init.add_argument("--name", default="Tari")
     init.add_argument("--port", type=int, default=DEFAULT_PORT)
     for action in ("start", "stop", "status", "logs", "doctor", "openclaw", "gog", "google"):
-        sub.add_parser(action)
+        sub.add_parser(action, add_help=action not in ("openclaw", "gog", "google"))
     speak = sub.add_parser("chat")
     speak.add_argument("prompt")
     speak.add_argument("--conversation", default="clawvoice-demo")
@@ -204,7 +284,8 @@ def main() -> int:
         initialize(args.timezone, args.name, args.port)
         return 0
     if args.action == "start":
-        return run_compose("up", "-d", "--build", "openclaw")
+        validate_policy()
+        return run_compose("up", "-d", "--build", "--wait", "--wait-timeout", "90", "openclaw")
     if args.action == "stop":
         return run_compose("stop", "openclaw")
     if args.action == "status":
@@ -215,14 +296,20 @@ def main() -> int:
         if rest:
             parser.error("Unexpected arguments")
         data = load_env()
+        validate_policy()
         if not shutil.which("docker"):
             raise RuntimeError("Docker CLI is missing")
-        print("Configured agent model:", data.get("CLAWVOICE_MODEL", DEFAULT_MODEL))
+        print("Configured agent model:", data.get("CLAWVOICE_MODEL", DEFAULT_MODEL), flush=True)
         print("Isolated project:", data["COMPOSE_PROJECT_NAME"])
         print("Local Gateway port:", data["CLAWVOICE_OPENCLAW_PORT"])
         print("Google account configured:", bool(data.get("TARI_GOOGLE_ACCOUNT")))
-        if data.get("TARI_CALENDAR_WRITES") != "0":
-            raise RuntimeError("Calendar writes must remain disabled in foundation stage")
+        for command in (("config", "--quiet"),
+                        ("exec", "-T", "openclaw", "node", "/app/openclaw.mjs", "config", "validate", "--json"),
+                        ("exec", "-T", "openclaw", "gog", "--version")):
+            status = run_compose(*command)
+            if status:
+                return status
+        check_gateway()
         return run_compose("ps")
     if args.action == "openclaw":
         if not rest:

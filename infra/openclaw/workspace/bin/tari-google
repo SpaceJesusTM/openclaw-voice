@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
-"""A small, explicit gogcli surface. Calendar mutations require reviewed proposals.
+"""A small, strictly read-only gogcli surface for the isolated ClawVoice demo.
 
 This is an application guardrail, not a sandbox for an agent with shell access.
 OAuth scopes remain the independent server-side permission boundary.
 """
 import argparse
-from datetime import datetime
-import fcntl
+from datetime import date, datetime
 import json
 import os
-from pathlib import Path
 import re
-import secrets
 import subprocess
 import sys
-import time
 from zoneinfo import ZoneInfo
 
 
@@ -31,19 +27,15 @@ EVENT_FIELDS = ("id", "iCalUID", "etag", "summary", "description", "location", "
                 "recurrence", "recurringEventId", "originalStartTime", "htmlLink")
 
 
-def workspace():
-    return Path(os.environ.get("TARI_WORKSPACE", Path(__file__).absolute().parent.parent))
-
-
 def account():
-    value = os.environ.get("TARI_GOOGLE_ACCOUNT") or os.environ.get("GOG_ACCOUNT", "")
-    if not value or value == "auto" or value.startswith("-") or "@" not in value:
+    value = os.environ.get("TARI_GOOGLE_ACCOUNT", "")
+    if not re.fullmatch(r"[^\s@-][^\s@]*@[^\s@]+", value):
         raise GoogleError("Set TARI_GOOGLE_ACCOUNT to the explicit Google account email.")
     return value
 
 
 def identifier(value):
-    if not value or value.startswith("-") or len(value) > 1024 or any(ord(c) < 32 for c in value):
+    if not isinstance(value, str) or not value or value.startswith("-") or len(value) > 1024 or any(ord(c) < 32 for c in value):
         raise argparse.ArgumentTypeError("Invalid identifier")
     return value
 
@@ -58,37 +50,33 @@ def timestamp(value):
         raise argparse.ArgumentTypeError("Use an ISO 8601 timestamp with UTC offset") from exc
 
 
-def run_gog(command, exact, write=False, allow_absent=False):
+def run_gog(command, exact):
     """Never evaluate shell text or pass through caller-supplied gog flags."""
-    client = os.environ.get("TARI_GOOGLE_WRITE_CLIENT" if write else "TARI_GOOGLE_READ_CLIENT",
-                            "tari-calendar-write" if write else "tari-read")
-    identifier(client)
+    allowed = {"gmail.messages.search", "gmail.get", "calendar.calendars",
+               "calendar.events", "calendar.event"}
+    if exact not in allowed:
+        raise GoogleError("Only approved Google reads are available.")
+    client = "tari-read"
     cmd = ["gog", "--account", account(), "--client", client,
            "--json", "--no-input", "--gmail-no-send", "--enable-commands-exact", exact]
-    if not write:
-        cmd.append("--readonly")
-    else:
-        cmd.append("--force")
+    cmd.append("--readonly")
     cmd.extend(command)
-    # These inherited options can reroute credentials or alter JSON envelopes.
-    env = os.environ.copy()
-    for key in ("GOG_ACCESS_TOKEN", "GOG_AUTH_MODE", "GOG_RESULTS_ONLY", "GOG_SELECT",
-                "GOG_DISCOVERY_BASE_URL", "GOG_API_BASE_URL", "GOG_DRY_RUN"):
-        env.pop(key, None)
+    # Preserve only storage/auth settings; inherited gog options cannot reroute
+    # requests, credentials, command guards, or pagination envelopes.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GOG_")}
+    for key in ("GOG_HOME", "GOG_KEYRING_BACKEND", "GOG_KEYRING_PASSWORD"):
+        if key in os.environ:
+            env[key] = os.environ[key]
     env["GOG_ACCOUNT"] = account()
     env["GOG_CLIENT"] = client
     env["GOG_TIMEZONE"] = os.environ.get("TARI_TIMEZONE", "UTC")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
         raise GoogleError("Google command unavailable or timed out; no result was verified.") from exc
     if result.returncode:
         # Do not print upstream stderr: it may contain tokens or private response bodies.
-        match = re.search(r"(?:googleapi: Error |HTTP(?: status)?[ :]+)(404|410)\b", result.stderr)
-        status = int(match.group(1)) if match else None
-        if allow_absent and status:
-            return {"absent": True}
-        raise GoogleError("Google request failed; check owner-managed authentication and scopes.", status)
+        raise GoogleError("Google request failed; check owner-managed authentication and scopes.")
     if len(result.stdout) > MAX_OUTPUT:
         raise GoogleError("Google output exceeded the safe size limit; narrow the date/query range.")
     try:
@@ -114,27 +102,71 @@ def collection(command, exact, key):
             return items
         if not isinstance(page, str) or page in seen:
             break
+        identifier(page)
         seen.add(page)
     raise GoogleError("Google pagination is incomplete; narrow the date/query range.")
 
 
 def calendars():
     rows = collection(["calendar", "calendars", "--max", "100"], "calendar.calendars", "calendars")
-    if not rows or any(not row.get("id") for row in rows):
+    if not rows or any(not isinstance(row.get("id"), str) or not row["id"] for row in rows):
         raise GoogleError("Calendar discovery is empty or incomplete; do not infer free time.")
     return [{k: row[k] for k in ("id", "summary", "accessRole", "primary", "timeZone") if k in row}
             for row in rows]
 
 
-def event(calendar_id, event_id, absent=False, write_profile=False):
-    output = run_gog(["calendar", "event", calendar_id, event_id], "calendar.event",
-                     write=write_profile, allow_absent=absent)
-    if isinstance(output, dict) and output.get("absent"):
-        return output
+def event(calendar_id, event_id):
+    output = run_gog(["calendar", "event", calendar_id, event_id], "calendar.event")
     row = output.get("event", output) if isinstance(output, dict) else None
-    if not isinstance(row, dict) or not row.get("id"):
+    if not isinstance(row, dict) or not valid_event(row) or row["id"] != event_id:
         raise GoogleError("Google returned no verifiable event.")
     return {**{k: row[k] for k in EVENT_FIELDS if k in row}, "calendar_id": calendar_id}
+
+
+def valid_event(row):
+    if not isinstance(row.get("id"), str) or not row["id"]:
+        return False
+    if row.get("status") == "cancelled":
+        return True
+    for key in ("start", "end"):
+        boundary = row.get(key)
+        if not isinstance(boundary, dict):
+            return False
+        try:
+            if "dateTime" in boundary:
+                timestamp(boundary["dateTime"])
+            else:
+                date.fromisoformat(boundary["date"])
+        except (KeyError, TypeError, ValueError, AttributeError, argparse.ArgumentTypeError):
+            return False
+    return True
+
+
+def sanitize_mail(value):
+    """Conservatively withhold security mail and URLs before agent context.
+
+    This is a best-effort content filter, not a guarantee against arbitrary
+    secrets embedded in ordinary messages. Keep real account data out of demos.
+    """
+    security = re.compile(
+        r"verif(?:y|ication)|one[ -]?time|\botp\b|security code|auth(?:entication|orization) code|"
+        r"sign[ -]?in code|login code|password|account recovery|recovery (?:code|link)|"
+        r"reset (?:code|link)", re.I)
+    def clean(item, sensitive=False, key=""):
+        if isinstance(item, dict):
+            # Apply to a whole message so a subject can protect a numeric body.
+            sensitive = sensitive or ("messages" not in item and bool(security.search(json.dumps(item))))
+            return {k: clean(v, sensitive, k) for k, v in item.items()}
+        if isinstance(item, list):
+            return [clean(v, sensitive, key) for v in item]
+        if isinstance(item, str):
+            if key in {"id", "messageId", "threadId", "nextPageToken", "internalDate", "internalDateIso", "date", "labelIds"}:
+                return item
+            if sensitive or re.fullmatch(r"\s*\d{4,8}\s*", item):
+                return "[security-related content withheld]"
+            return re.sub(r"https?://[^\s<>]+", "[link withheld]", item)
+        return item
+    return clean(value)
 
 
 def list_events(start, end):
@@ -148,139 +180,13 @@ def list_events(start, end):
         events = collection(["calendar", "events", cid, "--from", start, "--to", end,
                              "--max", "250", "--timezone", zone], "calendar.events", "events")
         for item in events:
-            if not item.get("id") or (item.get("status") != "cancelled" and
-                                      (not item.get("start") or not item.get("end"))):
+            if not valid_event(item):
                 raise GoogleError("An event is missing required fields; completeness is unknown.")
             rows.append({**{k: item[k] for k in EVENT_FIELDS if k in item},
                          "calendar_id": cid, "calendar_access_role": source.get("accessRole"),
                          "calendar_primary": source.get("primary", False)})
     return {"events": rows, "calendars": sources, "time_zone": zone,
             "complete": True, "nextPageToken": None, "untrusted_content": True}
-
-
-def proposal_dir():
-    root = workspace().absolute()
-    if root.is_symlink() or any(parent.is_symlink() for parent in root.parents):
-        raise GoogleError("Workspace must not be a symlink.")
-    target = root / "state" / "google-proposals"
-    for part in (root / "state", target):
-        if part.is_symlink():
-            raise GoogleError("Proposal state must not use symlinks.")
-        part.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return target
-
-
-def owned_calendar(calendar_id):
-    """Resolve only the discovered primary calendar, including its canonical ID."""
-    primary = [row for row in calendars() if row.get("primary") is True and row.get("accessRole") == "owner"]
-    if len(primary) != 1 or calendar_id not in ("primary", primary[0]["id"]):
-        raise GoogleError("Calendar writes are limited to the explicitly discovered primary calendar.")
-    return primary[0]["id"]
-
-
-def propose(args):
-    cid = owned_calendar(args.calendar_id)
-    before = event(cid, args.event_id) if args.operation != "create" else None
-    if before and (before.get("recurrence") or before.get("recurringEventId")):
-        raise GoogleError("Recurring event mutations need a separate scope review; use Calendar directly.")
-    fields = {k: getattr(args, k) for k in ("summary", "start", "end", "description", "location")
-              if getattr(args, k, None) is not None}
-    if args.operation == "create" and not all(fields.get(k) for k in ("summary", "start", "end")):
-        raise GoogleError("Create requires summary, start, and end.")
-    if args.operation == "update" and not fields:
-        raise GoogleError("Update requires at least one field.")
-    if args.operation != "delete":
-        first = fields.get("start") or (before or {}).get("start", {}).get("dateTime")
-        last = fields.get("end") or (before or {}).get("end", {}).get("dateTime")
-        if not first or not last or datetime.fromisoformat(last.replace("Z", "+00:00")) <= datetime.fromisoformat(first.replace("Z", "+00:00")):
-            raise GoogleError("Start/end must be timed events with end after start.")
-    token = secrets.token_hex(16)
-    payload = {"operation": args.operation, "calendar_id": cid, "event_id": getattr(args, "event_id", None),
-               "account": account(), "fields": fields, "before": before, "created_at": time.time(),
-               "status": "pending", "send_updates": "none"}
-    path = proposal_dir() / (token + ".json")
-    with path.open("x", encoding="utf-8") as handle:
-        os.chmod(path, 0o600)
-        json.dump(payload, handle, ensure_ascii=False)
-    return {"proposal": token, "confirmation": token, "change": payload,
-            "instruction": "Show this exact change to the user and obtain explicit approval before apply."}
-
-
-def apply(token, confirmation):
-    if os.environ.get("TARI_CALENDAR_WRITES") != "1":
-        raise GoogleError("Calendar writes are disabled; the owner must enable TARI_CALENDAR_WRITES=1.")
-    if not re.fullmatch(r"[a-f0-9]{32}", token) or not secrets.compare_digest(token, confirmation):
-        raise GoogleError("Confirmation must exactly match the reviewed proposal token.")
-    lock_path = proposal_dir() / (token + ".lock")
-    try:
-        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    except OSError as exc:
-        raise GoogleError("Proposal lock unavailable; no write was attempted.") from exc
-    with os.fdopen(descriptor, "w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise GoogleError("Proposal is already being applied; no write was attempted.") from exc
-        # Hold the lock through consumption, the remote write, and verification.
-        # Never unlink it: another process may already have opened this inode.
-        return apply_locked(token)
-
-
-def apply_locked(token):
-    path = proposal_dir() / (token + ".json")
-    if path.is_symlink():
-        raise GoogleError("Proposal must not be a symlink.")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise GoogleError("Proposal not found or unreadable.") from exc
-    if payload.get("status") != "pending" or time.time() - payload["created_at"] > 900:
-        raise GoogleError("Proposal expired or already attempted; review a new proposal.")
-    if payload["account"] != account():
-        raise GoogleError("Proposal account no longer matches the active account.")
-    cid = owned_calendar(payload["calendar_id"])
-    operation = payload["operation"]
-    if operation not in ("create", "update", "delete"):
-        raise GoogleError("Invalid proposal operation.")
-    eid = payload.get("event_id")
-    if operation != "create":
-        current = event(cid, eid)
-        if current != payload["before"]:
-            raise GoogleError("Event changed since review; request a new proposal.")
-    command = ["calendar", operation, cid] + ([identifier(eid)] if eid else [])
-    for key, value in payload["fields"].items():
-        if key not in ("summary", "start", "end", "description", "location"):
-            raise GoogleError("Invalid proposal field.")
-        flag = {"start": "from", "end": "to"}.get(key, key)
-        command.append("--" + flag + "=" + value)
-    command += ["--send-updates", "none"]
-    # Consume before remote request: timeout/retry cannot accidentally duplicate a create.
-    payload["status"] = "attempted"
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    response = run_gog(command, "calendar." + operation, write=True)
-    if operation == "create":
-        result = response.get("event", response) if isinstance(response, dict) else {}
-        eid = result.get("id")
-        if not eid:
-            raise GoogleError("Write may have succeeded, but no event ID was returned; inspect Calendar before retrying.")
-    verified = event(cid, identifier(eid), absent=operation == "delete", write_profile=True)
-    if operation == "delete":
-        if not verified.get("absent") and verified.get("status") != "cancelled":
-            raise GoogleError("Deletion could not be verified; inspect Calendar before retrying.")
-    else:
-        for key, expected in payload["fields"].items():
-            actual = verified.get(key)
-            if key in ("start", "end"):
-                actual = actual.get("dateTime") if isinstance(actual, dict) else None
-                same = actual and datetime.fromisoformat(actual.replace("Z", "+00:00")) == datetime.fromisoformat(expected)
-            else:
-                same = actual == expected
-            if not same:
-                raise GoogleError("Write response did not match the reviewed change; inspect Calendar before retrying.")
-    payload["status"] = "verified"
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return {"verified": True, "operation": operation, "calendar_id": cid, "event_id": eid,
-            "event": verified, "untrusted_content": True}
 
 
 def parser():
@@ -302,18 +208,6 @@ def parser():
     get = calendar.add_parser("get")
     get.add_argument("calendar_id", type=identifier)
     get.add_argument("event_id", type=identifier)
-    proposing = calendar.add_parser("propose").add_subparsers(dest="operation", required=True)
-    for operation in ("create", "update", "delete"):
-        proposal = proposing.add_parser(operation)
-        proposal.add_argument("calendar_id", type=identifier)
-        if operation != "create":
-            proposal.add_argument("event_id", type=identifier)
-        if operation != "delete":
-            for field in ("summary", "description", "location", "start", "end"):
-                proposal.add_argument("--" + field, type=timestamp if field in ("start", "end") else str)
-    applying = calendar.add_parser("apply")
-    applying.add_argument("token")
-    applying.add_argument("--confirm", required=True)
     return cli
 
 
@@ -323,25 +217,27 @@ def main(argv=None):
         account()
         if args.service == "gmail":
             if args.action == "search":
-                if not 1 <= args.max <= 100 or len(args.query) > 2000 or args.query.startswith("-"):
+                if not 1 <= args.max <= 100 or not args.query.strip() or len(args.query) > 2000 or args.query.startswith("-"):
                     raise GoogleError("Use a bounded Gmail query and --max between 1 and 100.")
                 command = ["gmail", "messages", "search", args.query, "--max", str(args.max)]
                 if args.page:
                     command += ["--page", args.page]
                 result = run_gog(command, "gmail.messages.search")
+                rows = result.get("messages") if isinstance(result, dict) else result
+                if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get("id") for row in rows):
+                    raise GoogleError("Google returned an unexpected message list; completeness is unknown.")
             else:
                 result = run_gog(["gmail", "get", args.message_id, "--sanitize-content"], "gmail.get")
-            output = {"data": result, "untrusted_content": True, "account": account(), "read_only": True}
+                row = result.get("message", result) if isinstance(result, dict) else None
+                if not isinstance(row, dict) or not row.get("id"):
+                    raise GoogleError("Google returned no verifiable message.")
+            output = {"data": sanitize_mail(result), "untrusted_content": True, "read_only": True}
         elif args.action == "calendars":
             output = {"calendars": calendars(), "complete": True, "untrusted_content": True}
         elif args.action == "list":
             output = list_events(args.start, args.end)
         elif args.action == "get":
             output = {"event": event(args.calendar_id, args.event_id), "untrusted_content": True}
-        elif args.action == "propose":
-            output = propose(args)
-        else:
-            output = apply(args.token, args.confirm)
         print(json.dumps(output, ensure_ascii=False))
         return 0
     except (GoogleError, ValueError, OSError, argparse.ArgumentTypeError) as exc:

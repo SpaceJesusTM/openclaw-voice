@@ -11,7 +11,7 @@ supplies application-specific identity, permissions, routing and caches.
 | --- | --- | --- |
 | `experiments/higgs-realtime-1.5/` | Direct API regression playground | Step 1 validated |
 | `experiments/pipecat-higgs-1.5/` | Pipecat speech-to-speech validation | Step 2 validated |
-| `infra/openclaw/` | Independent, minimal OpenClaw Gateway + Gmail/Calendar | Foundation scaffold; owner auth pending |
+| `infra/openclaw/` | Independent, minimal OpenClaw Gateway + Gmail/Calendar | Docker validated; owner auth/live reads pending |
 | `apps/web/` | Future presentation-ready frontend | Reserved |
 | `services/voice/` | Production Pipecat/Boson bridge | Reserved |
 | `services/orchestrator/` | Agent identity, floor, delegated tasks | Reserved |
@@ -37,7 +37,7 @@ a stable session key, never an authentication credential.
 
 ## Next milestones
 
-1. Owner installs Docker/opens account logins and verifies a two-turn Sol chat.
+1. Owner completes ChatGPT OAuth and verifies Sol conversations/session continuity.
 2. Owner separately authorizes the Gmail/Calendar OAuth read profile.
 3. Validate Google CLI reads and agent-initiated reads in the container.
 4. Add a server-side Pipecat to OpenClaw Gateway bridge, retaining nonblocking jobs.
