@@ -3,6 +3,7 @@
     .venv/bin/python probes/team_probe.py --live                 # typed checks only
     .venv/bin/python probes/team_probe.py --live --speech --stop # plus spoken routing and "stop"
     .venv/bin/python probes/team_probe.py --live --notice        # plus a read-only OpenClaw job notice
+    .venv/bin/python probes/team_probe.py --live --handover      # plus "Hey Tari" over Astra
 
 Requires ``make dev`` with Tari and Astra configured, the Boson key and both
 isolated OpenClaw Gateways. Speech input is synthetic (macOS ``say``). Nothing
@@ -16,6 +17,9 @@ Checks (from server events, not model wording):
   stop    a spoken "Stop." over a long answer ends it; nothing plays afterwards
   notice  a Tari background question finishes while Astra answers something
           else, and Tari's completion notice is spoken afterwards (delivered)
+  handover a spoken "Hey Tari, ..." over a long Astra answer cuts Astra, Tari
+          answers, and Astra does not resume; an Astra job announcement, if
+          any, waits for a natural break after Tari
 
 Reports go to ignored captures/team-probe-*.json (they contain conversation text).
 """
@@ -244,6 +248,39 @@ async def notice(client: TeamClient, out: dict) -> None:
     require(all(b[0] >= a[1] for a, b in zip(heard, heard[1:]) if a[1] is not None), f"overlapping replies {heard}")
 
 
+async def handover(client: TeamClient, out: dict) -> None:
+    await client.quiet()
+    mark = client.say("Astra, please describe the coffee shop website in detail, section by section.")
+    await client.wait(lambda: client.replies(mark, "astra", "speaking"), "Astra speaking", 60)
+    await asyncio.sleep(3)
+    turn = client.now()
+    playing = {e["reply"] for e in client.replies(mark, "astra", "speaking")}
+    client.mic.play(wav("tari-planner", "Hey Tari, what's on my planner today?"))
+    await client.wait(lambda: client.replies(turn, "tari", "done"), "Tari's answer", 90)
+    await asyncio.sleep(6)  # Astra must stay quiet afterwards too
+    check_handover(client, out, mark, turn, playing)
+
+
+def check_handover(client: TeamClient, out: dict, mark: float, turn: float, playing: set) -> None:
+    later = [e for e in client.replies(turn, "astra", "speaking") if e["reply"] not in playing]
+    resumed = [e for e in later if e.get("reply_kind") != "notice"]
+    tari_done = client.replies(turn, "tari", "done")[0]["t"]
+    announced = [e["t"] for e in later if e.get("reply_kind") == "notice"]
+    out["handover"] = {
+        "announced_after_tari_s": [round(t - tari_done, 2) for t in announced],
+        "routes": [(e.get("agent"), e.get("status")) for e in client.kind("clawvoice.team.user", turn)],
+        "astra": [(e["phase"], e.get("outcome")) for e in client.replies(turn, "astra") if e["phase"] != "speaking"],
+        "astra_resumed": [e["reply"] for e in resumed],
+        "spans": spans(client, mark),
+    }
+    require(("tari", "routed") in out["handover"]["routes"], f"routing {out['handover']['routes']}")
+    require(("cut", "cut") in out["handover"]["astra"], f"Astra was not cut {out['handover']['astra']}")
+    require(not resumed, f"Astra resumed after the handover {out['handover']}")
+    require(all(t - tari_done >= 3.0 for t in announced), f"Astra's announcement did not wait for a break {out['handover']}")
+    heard = out["handover"]["spans"]
+    require(all(b[0] >= a[1] for a, b in zip(heard, heard[1:]) if a[1] is not None), f"overlapping replies {heard}")
+
+
 async def main(args) -> int:
     client = TeamClient(args.url)
     out: dict = {"started": time.strftime("%Y-%m-%dT%H:%M:%S")}
@@ -257,6 +294,8 @@ async def main(args) -> int:
             await stop(client, out)
         if args.notice:
             await notice(client, out)
+        if args.handover:
+            await handover(client, out)
     except ProbeFailure as failure:
         status, out["failure"] = "FAIL", str(failure)
     finally:
@@ -278,6 +317,7 @@ if __name__ == "__main__":
     parser.add_argument("--speech", action="store_true")
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--notice", action="store_true")
+    parser.add_argument("--handover", action="store_true")
     arguments = parser.parse_args()
     if not arguments.live:
         parser.error("pass --live to permit live API use")

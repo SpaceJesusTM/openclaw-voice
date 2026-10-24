@@ -29,8 +29,16 @@ _FILLER_PAIRS = frozenset(
 )
 _MAX_FILLERS = 4
 _WORD = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)?")
+_MISSING_SPACE = re.compile(r"""([.!?]["'”’)]*)(?=[A-Z])""")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 _EDGE = " \t,.;:!?-–—"
+_PAUSE_STEM = re.compile(
+    r"(?:^|[\s,])(?:can|could|would|will|do|did|should|shall|may|might)\s+(?:you|i|we)(?:\s+please)?\?$",
+    re.IGNORECASE,
+)
+_PAUSE_TAIL = frozenset(
+    "to for from in on at with by about into onto of later today tomorrow tonight instead first".split()
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,47 @@ def _skip_fillers(words: list[tuple[str, int, int]]) -> int:
 def only_fillers(text: str) -> bool:
     words = _words(text)
     return _skip_fillers(words) >= len(words)
+
+
+def _merge_pause(first: str, second: str) -> str | None:
+    """Reconnect a clause that ASR split at a brief hesitation with '?'."""
+    first = first.strip()
+    second = second.strip()
+    if not first.endswith("?") or not second:
+        return None
+    w1 = _words(first)
+    w2 = _words(second)
+    if not w1 or not w2:
+        return None
+    if w1[-1][0] == w2[0][0]:
+        tail = second[w2[0][2] :]
+        if first.endswith('"?') and tail.strip().endswith("."):
+            return first[:-2] + " " + tail.lstrip(" ,").rstrip(".") + '"?'
+        return first[:-1] + tail
+    if _PAUSE_STEM.search(first) and second.endswith("."):
+        rest = second[:-1]
+        if not rest.startswith(("I ", "I'")):
+            rest = rest[0].lower() + rest[1:]
+        return f"{first[:-1]} {rest}?"
+    if second.endswith(".") and len(w2) <= 6 and w2[0][0] in _PAUSE_TAIL:
+        rest = second[0].lower() + second[1:-1]
+        return f"{first[:-1]} {rest}?"
+    return None
+
+
+def _smooth_clauses(parts: list[str]) -> str:
+    out: list[str] = []
+    for part in parts:
+        piece = part.strip()
+        if not piece:
+            continue
+        if out:
+            merged = _merge_pause(out[-1], piece)
+            if merged is not None:
+                out[-1] = merged
+                continue
+        out.append(piece)
+    return " ".join(out).strip()
 
 
 class AddressBook:
@@ -108,6 +157,7 @@ class AddressBook:
         text = " ".join(str(text or "").split())
         if not text:
             return []
+        text = _MISSING_SPACE.sub(r"\1 ", text)
         sentences = [s for s in _SENTENCE.split(text) if s.strip()]
         marks = [self._address(s) for s in sentences]
         groups: list[tuple[str, list[int]]] = []
@@ -120,13 +170,14 @@ class AddressBook:
             else:
                 lead.append(index)
         if not groups:
-            return [Route(None, text, text, False, is_stop_request(text), "none")]
+            smoothed = _smooth_clauses(sentences)
+            return [Route(None, smoothed, smoothed, False, is_stop_request(smoothed), "none")]
         routes = []
         for number, (agent, indexes) in enumerate(groups):
             if number == 0:
-                indexes = lead + indexes
-            spoken = " ".join(sentences[i] for i in indexes)
-            asked = " ".join(marks[i][2] if marks[i][0] == agent else sentences[i] for i in indexes).strip()
+                indexes = [i for i in lead if only_fillers(sentences[i])] + indexes
+            spoken = _smooth_clauses([sentences[i] for i in indexes])
+            asked = _smooth_clauses([marks[i][2] if marks[i][0] == agent else sentences[i] for i in indexes])
             how = next(marks[i][1] for i in indexes if marks[i][0] == agent)
             routes.append(Route(agent, spoken, asked, only_fillers(asked), is_stop_request(asked), how))
         return routes

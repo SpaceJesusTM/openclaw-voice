@@ -13,7 +13,7 @@ import re
 _FILLER = r"(?:ok|okay|alright|all right|hey|please|no|yeah|yes|thanks|thank you|right|um|uh)"
 _STOP = (
     r"(?:stop(?: talking| speaking| it| that| there| now| please)*"
-    r"|(?:that'?s|that is|ok that'?s|okay that'?s) (?:enough|all|fine)"
+    r"|(?:that'?s|that is|ok that'?s|okay that'?s) (?:enough|all|fine|good)(?: you can stop(?: now| talking| that| it)*)?"
     r"|enough(?: now)?"
     r"|you can stop(?: that| now| talking| there| it)*"
     r"|(?:please )?be quiet|quiet|shush|hush|shut up|never ?mind|that'?ll do)"

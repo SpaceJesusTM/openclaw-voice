@@ -66,6 +66,14 @@ fan-out into every agent or its fake tasks.
   keep their place.
 - A newer request to the same agent supersedes its replies not yet heard. An answer
   still unplayed after 60 s is dropped rather than played late.
+- **Addressing an agent hands it the floor** (it becomes the foreground agent):
+  - Another agent that was already answering (you heard it start) stops for good:
+    its speech is cut, its unheard replies are dropped, and the rest of its
+    response chain runs silently. Tool calls it made finish, its OpenClaw jobs keep
+    running, and its memory is truncated to what you heard. It does not resume.
+  - Another agent that had not started answering keeps its answer queued, but the
+    newly addressed agent speaks first: older speech waits up to 8 s for its reply.
+  - With several names in one utterance, the first one named takes the floor.
 - A reply whose tool call takes long yields the floor after 6 s and rejoins the queue.
 - Higgs 1.5 occasionally fails a response (`upstream_error`); it is retried once.
 
@@ -73,19 +81,22 @@ fan-out into every agent or its fake tasks.
 
 Unchanged per agent: `delegate_task` starts a real OpenClaw job in that agent's
 runtime; "done" still needs the receipt plus independent read-back. When a job
-finishes, its owner gets a notice; the notice is spoken in the owner's voice when
-the room has been quiet for 1.2 s, never over another agent, and needs no new
-mention of the name. Delivered at most once (same states as single-agent mode):
+finishes, its owner gets a notice; the UI shows the result at once, and the notice
+is spoken in the owner's voice at a natural break, never over another agent and
+with no new mention of the name. A natural break: no one speaking, no answer still
+on its way, and 1.2 s of quiet, or 3.5 s if you are talking with another agent
+(so a finished job does not cut into your conversation with Tari). Delivered at most once (same states as single-agent mode):
 a result you did not hear before disconnecting is announced on the next
 connection; one you already heard part of is not replayed.
 
 ## Interruptions, stop, cancel
 
 - Barge-in stops speech only. Jobs keep running; a reply's tool chain continues and
-  its answer queues.
+  its answer queues, unless your words address another agent (handover, above):
+  then the chain finishes silently.
 - "Stop" / "That's enough" (no name) ends the current speech and drops every queued
-  reply; notices wait until you say something new. "Tari, stop" does this for Tari only.
-  No model reply, no job cancelled.
+  answer; queued job announcements are kept and wait until you say something new.
+  "Tari, stop" does this for Tari only. No model reply, no job cancelled.
 - Cancelling is a request to the owner: "Astra, cancel the website task" goes to
   Astra's `cancel_task`. The UI's Cancel button cancels that job's owner's job.
 
@@ -138,6 +149,10 @@ mode (two seats, labels, routing chips, one connect) passed with no page errors.
   before routing): roughly 2 s from the end of speech to first audio.
 - Any speech, even to nobody, interrupts the current speaker (single-agent policy).
   Use headphones or push-to-talk.
+- Handover drops the unheard rest of an answer you turned away from (by design);
+  ask that agent again by name to hear it. If your transcript arrives more than
+  2.5 s after you stop talking, the old agent's queued speech can start in that
+  gap; the handover cuts it once your words are routed.
 - Interrupted replies are not resumed. A voice session that Higgs closes (idle
   timeout) reconnects on the next request with a short text recap only.
 - Not tested live: speakers without headphones (echo), sessions longer than about

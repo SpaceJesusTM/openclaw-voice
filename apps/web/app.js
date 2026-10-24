@@ -846,7 +846,10 @@ function onTeamReply(d) {
   } else if (d.phase === "dropped" && el) {
     el.classList.add("dropped");
   }
-  if (d.phase === "dropped") logLine("events", `${speaker.display_name}'s ${d.reply_kind} not played (${d.outcome})`);
+  if (d.phase === "dropped") {
+    const why = d.outcome === "handed_over" ? "you turned to another agent; its work continues" : d.outcome;
+    logLine("events", `${speaker.display_name}'s ${d.reply_kind} not played (${why})`);
+  }
 }
 
 function onTeamUser(d) {

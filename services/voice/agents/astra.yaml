@@ -12,7 +12,7 @@ voice:
 # Team mode: an utterance is for Astra when it starts with one of these words
 # (after "hey", "okay"...) or ends with one as a vocative ("..., Astra?").
 addressing:
-  aliases: [astra, astro, austra, astrah]
+  aliases: [astra, astro, austra, astrah, ashra, aster, esther]
 
 openclaw:
   agent_id: astra                    # OpenClaw agent; HTTP selector openclaw/astra

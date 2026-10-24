@@ -13,7 +13,7 @@ voice:
 # (after "hey", "okay"...) or ends with one as a vocative ("..., Tari?").
 # Extra entries are likely transcriptions of the spoken name.
 addressing:
-  aliases: [tari, tarry, tary, tahri, tarri, tori, atari]
+  aliases: [tari, tarry, tary, tahri, tarri, tori, atari, terry]
 
 openclaw:
   agent_id: tari                     # OpenClaw agent; HTTP selector openclaw/tari

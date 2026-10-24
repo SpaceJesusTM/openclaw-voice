@@ -14,6 +14,9 @@ Rules
 - User speech comes first: nothing starts while the user is speaking, or while
   a user turn that just ended is still being transcribed (it may be "stop", or
   a request), and talking over a reply cuts it. Queued replies keep their place.
+- Addressing an agent hands it the floor (the foreground agent): its replies go
+  before older queued speech, and other agents' older speech waits (at most
+  FOREGROUND_WAIT) while it prepares its reply.
 - Background-task notices also need a natural pause (NOTICE_GAP of quiet) and
   never cut anyone off.
 - An answer left waiting longer than STALE_SECONDS is dropped, not played late.
@@ -40,6 +43,7 @@ NOTICE_GAP = 1.2  # quiet needed before a background-task notice
 STALE_SECONDS = 60.0  # an answer not played by then is dropped
 MAX_HOLD_SECONDS = 6.0  # a reply waiting on its own tool call yields the floor after this
 MIN_HEARD_BYTES = int(0.3 * BYTES_PER_SECOND)  # a notice heard this far counts as delivered
+FOREGROUND_WAIT = 8.0  # longest that older speech waits for the newly addressed agent's reply
 
 
 @dataclass(eq=False)
@@ -56,7 +60,7 @@ class Reply:
     fragments: list[tuple[str, int]] = field(default_factory=list)  # (text, end byte)
     texts: dict[str, str] = field(default_factory=dict)  # item_id -> transcript
     state: str = "pending"  # pending (no unplayed audio) -> ready -> playing -> done
-    outcome: str = ""  # played | cut | dismissed | superseded | stale | silent
+    outcome: str = ""  # played | cut | dismissed | superseded | handed_over | stale | silent
     generating: bool = True
     cancelled: bool = False  # stop its response chain (dismissed or superseded)
     played: int = 0
@@ -136,12 +140,16 @@ class SpeakingFloor:
         on_event: OnEvent,
         clock: Callable[[], float] = time.monotonic,
         notice_ok: Callable[[str], bool] | None = None,
+        answer_due: Callable[[str], bool] | None = None,
     ):
         self._emit = emit
         self._flush = flush
         self._on_event = on_event
         self.clock = clock
         self.notice_ok = notice_ok or (lambda agent: True)
+        self.answer_due = answer_due or (lambda agent: False)  # agent still owes a spoken answer
+        self.foreground: str | None = None  # the agent the user addressed last
+        self.foreground_at = float("-inf")
         self.replies: list[Reply] = []
         self.current: Reply | None = None
         self.user_speaking = False
@@ -166,6 +174,16 @@ class SpeakingFloor:
         self.replies.append(reply)
         return reply
 
+    def background_reply(self, agent: str, kind: str, job_ids: tuple[str, ...] = ()) -> Reply:
+        """A reply that is never played: its agent handed the floor over, but its tool chain runs on."""
+        self._seq += 1
+        return Reply(seq=self._seq, agent=agent, kind=kind, created_at=self.clock(), job_ids=tuple(job_ids),
+                     state="done", outcome="handed_over")
+
+    def hand_over(self, agent: str) -> None:
+        self.foreground = agent
+        self.foreground_at = self.clock()
+
     def audio_arrived(self, reply: Reply) -> None:
         if reply.state == "pending" and reply.played < len(reply.audio):
             reply.state = "ready"
@@ -179,7 +197,10 @@ class SpeakingFloor:
             self._close(reply, "silent" if reply.played == 0 else "played", "finished")
 
     def ready(self) -> list[Reply]:
-        return sorted((r for r in self.replies if r.state == "ready"), key=lambda r: (r.ready_at or 0.0, r.seq))
+        """Ready replies in play order: the foreground agent's answers first, then first ready."""
+        def order(r: Reply) -> tuple:
+            return (not (r.agent == self.foreground and r.kind != "notice"), r.ready_at or 0.0, r.seq)
+        return sorted((r for r in self.replies if r.state == "ready"), key=order)
 
     def waiting(self, agent: str) -> bool:
         return any(r.agent == agent and r.state == "ready" for r in self.replies)
@@ -187,11 +208,15 @@ class SpeakingFloor:
     def thinking(self, agent: str) -> bool:
         return any(r.agent == agent and r.state == "pending" and r.generating for r in self.replies)
 
-    def drop(self, predicate: Callable[[Reply], bool], outcome: str) -> list[Reply]:
-        """Drop replies that have not started playing and match ``predicate``."""
+    def drop(self, predicate: Callable[[Reply], bool], outcome: str, *, cancel: bool = True) -> list[Reply]:
+        """Drop replies that have not started playing and match ``predicate``.
+
+        ``cancel`` also ends their response chains; without it the chain (its
+        tool calls) runs on and nothing more of it is played.
+        """
         dropped = [r for r in self.replies if r is not self.current and r.state in ("pending", "ready") and predicate(r)]
         for reply in dropped:
-            reply.cancelled = True
+            reply.cancelled = reply.cancelled or cancel
             self._close(reply, outcome, "dropped")
         return dropped
 
@@ -278,6 +303,8 @@ class SpeakingFloor:
         for reply in self.ready():
             if reply.kind == "notice" and (now - self.last_activity < NOTICE_GAP or not self.notice_ok(reply.agent)):
                 continue
+            if self._held(reply, now):
+                continue
             reply.state = "playing"
             reply.started_at = reply.started_at or now
             self.current = reply
@@ -286,6 +313,13 @@ class SpeakingFloor:
             self._event("started", reply)
             return True
         return False
+
+    def _held(self, reply: Reply, now: float) -> bool:
+        """Another agent's speech waits while the newly addressed agent prepares its reply (bounded)."""
+        agent = self.foreground
+        if agent is None or reply.agent == agent or now - self.foreground_at >= FOREGROUND_WAIT:
+            return False
+        return self.thinking(agent) or self.answer_due(agent)
 
     def _expire(self, now: float) -> None:
         self.drop(lambda r: r.kind != "notice" and r.state == "ready" and now - (r.ready_at or now) > STALE_SECONDS, "stale")

@@ -13,6 +13,9 @@
   AgentRuntime (cache, jobs, verifiers). Agents work at the same time.
 - Floor: one SpeakingFloor. Replies from every agent queue for it, one is
   audible at a time, and finished background tasks are announced at pauses.
+- Handover: addressing an agent makes it the foreground agent. Another agent
+  that was already answering goes quiet (its unheard speech is dropped, its
+  tool chain and jobs run on); its job announcements wait for a natural break.
 """
 
 from __future__ import annotations
@@ -54,6 +57,7 @@ MIC_BATCH_BYTES = 4800  # 100 ms per append
 FOLLOW_UP_SECONDS = 12.0  # after a bare "Hey <Name>.", the next utterance is for that agent
 CONTINUATION_SECONDS = 1.5  # an unnamed fragment this soon after a named one continues it
 CLIENT_SILENCE_SECONDS = 3.0
+BACKGROUND_NOTICE_GAP = 3.5  # quiet needed before a notice from an agent other than the addressed one
 LISTENER_INSTRUCTIONS = "You are a silent listener in a voice room. Never respond and never produce output."
 
 
@@ -81,6 +85,83 @@ def _tokens(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", text.lower().replace("’", "'"))
 
 
+_FILLER_NOISE = frozenset({"uh", "um", "erm", "hmm", "ah", "er"})
+_TRAILING_NOISE = re.compile(r"(?<=[.!?])\s*(?:hey|ah|uh|um|erm|hmm|er|oh)[.!?]?\s*$", re.IGNORECASE)
+_LEADING_PUNCT = " \t,.;:!?-'\"“”‘’()"
+_ORDINAL_PAIRS: dict[tuple[str, str], str] = {
+    ("twenty", "first"): "21st",
+    ("twenty", "second"): "22nd",
+    ("twenty", "third"): "23rd",
+    ("twenty", "fourth"): "24th",
+    ("twenty", "fifth"): "25th",
+    ("twenty", "sixth"): "26th",
+    ("twenty", "seventh"): "27th",
+    ("twenty", "eighth"): "28th",
+    ("twenty", "ninth"): "29th",
+    ("thirty", "first"): "31st",
+}
+_WORD_NUMS: dict[str, str] = {
+    "first": "1st",
+    "second": "2nd",
+    "third": "3rd",
+    "fourth": "4th",
+    "fifth": "5th",
+    "sixth": "6th",
+    "seventh": "7th",
+    "eighth": "8th",
+    "ninth": "9th",
+    "tenth": "10th",
+    "twentieth": "20th",
+    "thirtieth": "30th",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+}
+
+
+def _align_prefix(prev_w: list[tuple[str, int, int]], text_w: list[tuple[str, int, int]]) -> int:
+    """Return how many leading tokens of text_w repeat a suffix (or long span) of prev_w."""
+    m, n = len(prev_w), len(text_w)
+    if m == 0 or n == 0:
+        return 0
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for j in range(1, n + 1):
+        dp[0][j] = -2 * j
+    for i in range(1, m + 1):
+        dp[i][0] = 0
+        pw = prev_w[i - 1][0]
+        for j in range(1, n + 1):
+            tw = text_w[j - 1][0]
+            match = dp[i - 1][j - 1] + (3 if pw == tw else -2)
+            delete = dp[i - 1][j] - 2
+            insert = dp[i][j - 1] - 2
+            dp[i][j] = max(match, delete, insert)
+    best_j = 0
+    best_score = 0
+    for j in range(1, n + 1):
+        tw = text_w[j - 1][0]
+        for i in (m - 1, m):
+            if i >= 1 and prev_w[i - 1][0] == tw:
+                sc = dp[i][j]
+                if sc >= max(3, int(j * 1.2)) and sc >= best_score:
+                    best_score = sc
+                    best_j = j
+        if j >= 6:
+            for i in range(6, m + 1):
+                if prev_w[i - 1][0] == tw and dp[i][j] >= max(15, int(j * 2.0)):
+                    if dp[i][j] >= best_score:
+                        best_score = dp[i][j]
+                        best_j = j
+    return best_j
+
+
 class TeamRoom(FrameProcessor):
     def __init__(
         self,
@@ -96,7 +177,8 @@ class TeamRoom(FrameProcessor):
         self.trace = trace
         self.room_id = room_id
         self.send_ui: Callable[[dict[str, Any]], Awaitable[None]] | None = None
-        self.floor = SpeakingFloor(emit=self._emit_audio, flush=self._flush, on_event=self._floor_event, notice_ok=self._notice_ok)
+        self.floor = SpeakingFloor(emit=self._emit_audio, flush=self._flush, on_event=self._floor_event,
+                                   notice_ok=self._notice_ok, answer_due=self._answer_due)
         self.runtimes = {rt.agent.id: rt for rt in runtimes}
         self.voices: dict[str, AgentVoice] = {}
         for rt in runtimes:
@@ -118,6 +200,9 @@ class TeamRoom(FrameProcessor):
         self._mic_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
         self._turns: dict[str, dict[str, float]] = {}
         self._item_text: dict[str, str] = {}  # transcript already routed, per listener item
+        self._last_transcript: str = ""
+        self._deferred: tuple[str, str, float, float] | None = None
+        self._dispatched: list[tuple[str, tuple[str, ...]]] = []
         self._last_named: tuple[str, float] | None = None
         self._follow_up: tuple[str, float] | None = None
         self._dirty = True
@@ -283,7 +368,7 @@ class TeamRoom(FrameProcessor):
         item = str(event.get("item_id") or "")
         now = time.monotonic()
         if kind == "input_audio_buffer.speech_started":
-            self._turns[item] = {"started": now}
+            self._turns.setdefault(item, {})["started"] = self._turns.get(item, {}).get("started", now)
             await self.floor.user_started()  # barge-in: the audible reply stops; jobs are untouched
             self.ui("team.hearing", {"on": True})
             self.changed()
@@ -293,46 +378,136 @@ class TeamRoom(FrameProcessor):
             self.ui("team.hearing", {"on": False})
             self.changed()
         elif kind == "conversation.item.input_audio_transcription.completed":
+            raw = str(event.get("transcript") or "")
+            if self.floor.user_speaking:
+                # The user paused briefly and already resumed speaking before the first half's
+                # transcript arrived. Hold it until speech ends unless it is an explicit stop.
+                peek = self._new_words(item, raw, commit=False)
+                if not (peek and any(r.stop for r in self.book.parse(peek))):
+                    turn = self._turns.get(item, {})
+                    self._deferred = (item, raw, turn.get("started", now), now)
+                    return
+            self._deferred = None
             self.floor.transcript_done(item)
             turn = self._turns.pop(item, {})
-            text = self._new_words(item, str(event.get("transcript") or ""))
+            text = self._new_words(item, raw)
             if text:
                 await self.utterance(text, started=turn.get("started", now), ended=turn.get("stopped", now))
             self.changed()
         elif kind == "conversation.item.input_audio_transcription.failed":
             self.floor.transcript_done(item)
             self._turns.pop(item, None)
-            self.ui("team.user", {"text": "", "agent": None, "status": "unclear"})
+            if getattr(self, "_deferred", None) is not None:
+                await self._flush_deferred()
+            else:
+                self.ui("team.user", {"text": "", "agent": None, "status": "unclear"})
         elif kind == "response.created":
             logger.debug("Team listener started a response although create_response is off; ignoring it")
         elif kind == "error":
             error = event.get("error") or {}
             logger.warning(f"Team listener error {error.get('code') or error.get('type')}: {str(error.get('message'))[:160]}")
 
-    def _new_words(self, item_id: str, transcript: str) -> str:
+    async def _flush_deferred(self) -> None:
+        deferred = getattr(self, "_deferred", None)
+        if deferred is None:
+            return
+        self._deferred = None
+        item, raw, started, stopped = deferred
+        text = self._new_words(item, raw)
+        if text:
+            await self.utterance(text, started=started, ended=stopped)
+        self.changed()
+
+    def _norm_words(self, text: str) -> list[tuple[str, int, int]]:
+        raw: list[tuple[str, int, int]] = []
+        for m in re.finditer(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)?", text):
+            w = m.group(0).lower().replace("’", "'")
+            if w in _FILLER_NOISE:
+                continue
+            w = self.book.agent_for(w) or _WORD_NUMS.get(w, w)
+            raw.append((w, m.start(), m.end()))
+        out: list[tuple[str, int, int]] = []
+        i = 0
+        while i < len(raw):
+            if i + 1 < len(raw) and (raw[i][0], raw[i + 1][0]) in _ORDINAL_PAIRS:
+                combined = _ORDINAL_PAIRS[(raw[i][0], raw[i + 1][0])]
+                out.append((combined, raw[i][1], raw[i + 1][2]))
+                i += 2
+                if i < len(raw) and raw[i][0] in ("1st", "first"):
+                    out[-1] = (combined, out[-1][1], raw[i][2])
+                    i += 1
+            else:
+                out.append(raw[i])
+                i += 1
+        return out
+
+    def _new_words(self, item_id: str, transcript: str, *, commit: bool = True) -> str:
         """The new part of a transcript.
 
         The listener can reuse one conversation item for consecutive turns, and
-        its transcript then accumulates ("<earlier turn>?Stop."), as the
-        agent-selector experiment also saw. Per item, only what follows the text
-        already routed is new. A repeat in a new item is a new request.
+        Higgs re-transcribes a rolling ~30s window on each turn (evicting older
+        words from the front and occasionally re-punctuating or slightly
+        re-transcribing earlier words). Per item (and across cross-item history
+        replays), align the suffix of earlier speech against the prefix of the
+        new transcript so only genuinely new words are routed. A single request
+        repeated in a new item remains a new request.
         """
         text = " ".join(transcript.split())
+        text = _TRAILING_NOISE.sub("", text).strip()
         previous = self._item_text.get(item_id, "") if item_id else ""
-        if item_id:
-            self._item_text[item_id] = text
-            if len(self._item_text) > 200:
-                self._item_text.pop(next(iter(self._item_text)))
-        if not previous:
+        last_transcript = getattr(self, "_last_transcript", "")
+        prev_for_align = previous or last_transcript
+        is_same_item = bool(previous)
+        if commit:
+            if item_id and text:
+                self._item_text[item_id] = text
+                if len(self._item_text) > 200:
+                    self._item_text.pop(next(iter(self._item_text)))
+            if text:
+                self._last_transcript = text
+        if not prev_for_align or not text:
             return text
-        if text.startswith(previous):
-            return text[len(previous) :].strip()
-        # Re-split or re-punctuated: drop the leading words that repeat the earlier text.
+        if is_same_item and text.startswith(previous):
+            return text[len(previous) :].lstrip(_LEADING_PUNCT).strip()
+        prev_w = self._norm_words(prev_for_align)
+        text_w = self._norm_words(text)
+        best_j = _align_prefix(prev_w, text_w)
+        if best_j > 0:
+            if not is_same_item and best_j == len(text_w) and len(self.book.parse(text)) <= 1:
+                return text
+            cut = text_w[best_j - 1][2]
+            return text[cut:].lstrip(_LEADING_PUNCT).strip()
+        # Fallback for exact token prefix match.
         earlier = _tokens(previous)
         matches = list(re.finditer(r"[a-z0-9']+", text.lower().replace("’", "'")))
         if earlier and [m.group(0) for m in matches[: len(earlier)]] == earlier:
-            return text[matches[len(earlier) - 1].end() :].lstrip(" ,.;:!?-").strip()
+            return text[matches[len(earlier) - 1].end() :].lstrip(_LEADING_PUNCT).strip()
         return text
+
+    def _is_replayed_route(self, agent: str, request: str) -> bool:
+        dispatched = getattr(self, "_dispatched", None)
+        if not dispatched:
+            return False
+        req_tokens = tuple(w for w, _, _ in self._norm_words(request))
+        if len(req_tokens) < 4:
+            return False
+        req_set = set(req_tokens)
+        for prev_agent, prev_tokens in dispatched:
+            if prev_agent != agent or len(prev_tokens) < 4:
+                continue
+            overlap = sum(1 for tok in req_tokens if tok in prev_tokens) / max(len(req_tokens), len(prev_tokens))
+            if overlap >= 0.8 or req_set == set(prev_tokens):
+                return True
+        return False
+
+    def _record_dispatched(self, agent: str, request: str) -> None:
+        if not hasattr(self, "_dispatched"):
+            self._dispatched = []
+        tokens = tuple(w for w, _, _ in self._norm_words(request))
+        if tokens:
+            self._dispatched.append((agent, tokens))
+            if len(self._dispatched) > 50:
+                self._dispatched.pop(0)
 
     # ------------------------------------------------------------ routing
     async def typed(self, text: str) -> None:
@@ -343,7 +518,17 @@ class TeamRoom(FrameProcessor):
 
     async def utterance(self, text: str, *, started: float, ended: float, typed: bool = False) -> None:
         """Route one user utterance by the name it starts (or ends) with."""
-        for route in self.book.parse(text):
+        routes = self.book.parse(text)
+        if not typed and len(routes) > 1:
+            fresh = [
+                r
+                for r in routes
+                if r.stop or r.bare or r.agent is None or not self._is_replayed_route(r.agent, r.request)
+            ]
+            if fresh:
+                routes = fresh
+        handed_over = False
+        for route in routes:
             if route.stop:
                 await self._stop(route.agent, route.text, typed)
                 continue
@@ -357,7 +542,9 @@ class TeamRoom(FrameProcessor):
                     self.ui("team.user", {"text": route.text, "agent": None, "status": "unaddressed", "typed": typed})
                     continue
                 route = route.to(agent, how)
-            self.addressed = agent
+            if not handed_over:  # several names in one utterance: the first one takes the floor
+                handed_over = True
+                await self._hand_over(agent)
             if route.bare:
                 self._follow_up = (agent, time.monotonic() + FOLLOW_UP_SECONDS)
                 self.trace.record("team.route", text=route.text, agent=agent, how="bare")
@@ -367,6 +554,7 @@ class TeamRoom(FrameProcessor):
             self._last_named = (agent, ended)
             for voice in self.voices.values():
                 voice.silenced = False
+            self._record_dispatched(agent, route.request)
             self.trace.record("team.route", text=route.text, agent=agent, how=route.how)
             self.ui("team.user", {"text": route.text, "agent": agent, "status": "routed", "how": route.how, "typed": typed})
             self.voices[agent].ask(route.text)
@@ -383,6 +571,21 @@ class TeamRoom(FrameProcessor):
             return self._last_named[0], "continuation"
         return None, "none"
 
+    async def _hand_over(self, agent: str) -> None:
+        """Addressing an agent gives it the floor. The others' conversation yields; their work goes on."""
+        self.addressed = agent
+        self.floor.hand_over(agent)
+        current = self.floor.current
+        if current is not None and current.agent != agent:
+            await self.floor.cut()  # a typed request: no barge-in has stopped it yet
+        yielded = []
+        for voice in self.voices.values():
+            if voice.id != agent and voice.spoke and not voice.backgrounded:
+                voice.yield_floor()
+                yielded.append(voice.id)
+        if yielded:
+            self.trace.record("team.handover", to=agent, yielded=yielded)
+
     async def _stop(self, agent: str | None, text: str, typed: bool) -> None:
         """"Stop" ends speech (everyone's, or the named agent's) and drops queued replies. Jobs keep running."""
         targets = [agent] if agent else list(self.voices)
@@ -391,7 +594,8 @@ class TeamRoom(FrameProcessor):
             cut = await self.floor.cut()
             if cut is not None:
                 cut.cancelled = True
-        self.floor.drop(lambda r: r.agent in targets, "dismissed")
+        # Queued answers go; queued job notices stay (held while silenced, never lost).
+        self.floor.drop(lambda r: r.agent in targets and r.kind != "notice", "dismissed")
         for target in targets:
             self.voices[target].on_stop()
         self.trace.record("team.route", text=text, agent=agent, how="stop")
@@ -400,9 +604,25 @@ class TeamRoom(FrameProcessor):
         self.changed()
 
     # ------------------------------------------------------------ floor and replies
+    def _answer_due(self, agent: str) -> bool:
+        voice = self.voices.get(agent)
+        return voice is not None and voice.answer_pending
+
+    def _answer_pending(self) -> bool:
+        """Some agent still owes the owner a spoken answer (silent, handed-over chains do not count)."""
+        return any(v.answer_pending for v in self.voices.values()) or any(
+            r.kind != "notice" and r.state == "pending" for r in self.floor.replies
+        )
+
     def _notice_ok(self, agent: str) -> bool:
         voice = self.voices.get(agent)
-        return self.client_alive() and voice is not None and not voice.silenced
+        if not (self.client_alive() and voice is not None and not voice.silenced):
+            return False
+        if self._answer_pending():
+            return False  # an answer is on its way; it goes first
+        if self.addressed not in (None, agent) and self.floor.clock() - self.floor.last_activity < BACKGROUND_NOTICE_GAP:
+            return False  # the owner is talking with another agent: wait for a natural break
+        return True
 
     def reply_created(self, reply: Reply) -> None:
         self.ui("team.reply", {**reply.public(), "phase": "thinking"})
@@ -415,6 +635,8 @@ class TeamRoom(FrameProcessor):
     def _floor_event(self, event: str, reply: Reply) -> None:
         voice = self.voices.get(reply.agent)
         if event == "started":
+            if voice is not None and reply.kind != "notice":
+                voice.spoke = True
             self.trace.record("team.reply", phase="speaking", agent=reply.agent, reply_kind=reply.kind, reply=reply.seq)
             self.ui("team.reply", {**reply.public(), "phase": "speaking", "text": reply.text})
         elif event in ("finished", "cut", "dropped"):
@@ -436,7 +658,7 @@ class TeamRoom(FrameProcessor):
         floor = self.floor
         if floor.current is not None or floor.ready() or floor.user_speaking or floor.awaiting:
             return
-        if any(r.kind != "notice" and r.state == "pending" for r in floor.replies):
+        if self._answer_pending():
             return  # an answer is on its way; let it go first
         if time.monotonic() - floor.last_activity < NOTICE_GAP or not self.client_alive():
             return
@@ -451,6 +673,9 @@ class TeamRoom(FrameProcessor):
             try:
                 await self.floor.tick()
                 now = time.monotonic()
+                deferred = getattr(self, "_deferred", None)
+                if deferred is not None and not self.floor.user_speaking and not self.floor.awaiting and now - deferred[3] >= 2.0:
+                    await self._flush_deferred()
                 if now >= next_notice:
                     next_notice = now + 0.2
                     self._schedule_notices()
@@ -475,7 +700,7 @@ class TeamRoom(FrameProcessor):
                 state = "speaking"
             elif self.floor.waiting(agent_id):
                 state = "waiting"
-            elif self.floor.thinking(agent_id) or voice.busy:
+            elif self.floor.thinking(agent_id) or (voice.busy and not voice.backgrounded):
                 state = "thinking"
             elif self._follow_up and self._follow_up[0] == agent_id and time.monotonic() <= self._follow_up[1]:
                 state = "listening"

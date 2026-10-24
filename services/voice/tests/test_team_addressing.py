@@ -4,7 +4,12 @@ import pytest
 
 from clawvoice.team.addressing import AddressBook
 
-BOOK = AddressBook({"tari": ["tari", "tarry", "atari"], "astra": ["astra", "astro"]})
+BOOK = AddressBook(
+    {
+        "tari": ["tari", "tarry", "tary", "tahri", "tarri", "tori", "atari", "terry"],
+        "astra": ["astra", "astro", "austra", "astrah", "ashra", "aster", "esther"],
+    }
+)
 
 
 def route(text):
@@ -71,3 +76,48 @@ def test_two_separate_addressed_requests_split_by_agent():
 def test_follow_on_sentences_stay_with_the_named_agent():
     routes = BOOK.parse("Astra, make a portfolio site. Use a dark theme.")
     assert len(routes) == 1 and routes[0].agent == "astra" and "dark theme" in routes[0].text
+
+
+def test_missing_space_after_punctuation_splits_separate_agent_requests():
+    text = (
+        "Okay, Tari, can you set a calendar event on October 31st for Halloween party from 8 to 9 p.m."
+        "Hey, Astro. What was the latest train change we made to the website? Okay, Astro. Can you?Revert that."
+    )
+    routes = BOOK.parse(text)
+    assert [(r.agent, r.request) for r in routes] == [
+        ("tari", "can you set a calendar event on October 31st for Halloween party from 8 to 9 p.m."),
+        ("astra", "What was the latest train change we made to the website? Can you revert that?"),
+    ]
+
+
+def test_hesitation_question_marks_smooth_into_single_requests():
+    assert route("Okay, Astro. Can you?Revert that.").request == "Can you revert that?"
+    assert route("Hey, Tari. What do I have?Later today.").request == "What do I have later today?"
+    assert (
+        route("Hey, Ashra, what was the latest train change we made?To the website.").request
+        == "what was the latest train change we made to the website?"
+    )
+    assert (
+        route('Hey Astro, can you change the heading and title to "Welcome to"?To Astro Studio.').request
+        == 'can you change the heading and title to "Welcome to Astro Studio"?'
+    )
+    assert (
+        route("Okay, Tari, can you set a calendar event on October thirty first?First, for.").request
+        == "can you set a calendar event on October thirty first, for."
+    )
+
+
+def test_unaddressed_non_filler_lead_does_not_contaminate_named_agent():
+    routes = BOOK.parse("What was the latest change to the website? Tari, what's on my calendar?")
+    assert len(routes) == 1
+    assert routes[0].agent == "tari"
+    assert routes[0].text == "Tari, what's on my calendar?"
+    assert routes[0].request == "what's on my calendar?"
+    # Pure filler lead sentences still attach cleanly.
+    filler_lead = BOOK.parse("Hey. Tari, what's on my calendar?")
+    assert len(filler_lead) == 1 and filler_lead[0].agent == "tari"
+
+
+def test_thats_good_you_can_stop_now_is_recognized_as_stop():
+    r = route("Okay, that's good. You can stop now.")
+    assert r.stop and r.agent is None

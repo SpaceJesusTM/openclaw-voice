@@ -91,10 +91,11 @@ speak, thinking, listening and background work; the transcript labels who spoke.
 | "Okay Astra, what coding projects are you working on?" | Astra answers from its project cache |
 | "Astra, create a simple personal portfolio website." | Astra: "On it"; a real coding job runs (Astra's seat shows work) |
 | "Hey Tari, what's my next meeting?" (while Astra works) | Tari answers at once; Astra keeps working |
-| "Tari, explain my schedule tomorrow in a little more detail." | Tari answers; if Astra's job finishes meanwhile, its announcement waits for a pause |
+| "Hey Tari, ..." while Astra is still talking | Astra stops for good (no resumed acknowledgement), Tari answers next; Astra's job keeps running |
+| "Tari, explain my schedule tomorrow in a little more detail." | Tari answers; if Astra's job finishes meanwhile, the UI shows it and the announcement waits for a natural break (about 3.5 s of quiet) |
 | (after Astra announces) open http://127.0.0.1:18950 | The real site Astra built |
 | "Astra, change the main heading to My Personal Portfolio." | A real edit, announced only after read-back |
-| "Hey Tari, what's on my planner today?" then at once "Okay Astra, what's the latest website update?" | Both answer, one after the other, never together |
+| "Hey Tari, what's on my planner today?" then at once "Okay Astra, what's the latest website update?" | Both answer, one at a time: Astra (addressed last) first, then Tari |
 | "What's the weather like?" (no name) | Nobody answers; marked "not addressed" |
 | Talk over an agent / "Stop." / "Tari, stop." | Speech stops (everyone's / Tari's); jobs keep running |
 | "Astra, cancel the website task." | Only Astra's job is cancelled |

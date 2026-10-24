@@ -86,6 +86,9 @@ class AgentVoice:
         self.history: deque[tuple[str, str]] = deque(maxlen=8)  # for a recap after reconnecting
         self.notices: deque[dict[str, Any]] = deque()
         self.silenced = False  # after "stop": no notices until the user says something new
+        self.spoke = False  # its answer to the latest request has started playing
+        self.backgrounded = False  # the owner addressed another agent: work on, say nothing more
+        self._answering = False
         self._ops: asyncio.Queue = asyncio.Queue()
         self._queued_requests = 0
         self._worker: asyncio.Task | None = None
@@ -147,6 +150,8 @@ class AgentVoice:
         self.user_words.append(text[:400])
         self.history.append(("Owner", text[:400]))
         self.silenced = False
+        self.spoke = False
+        self.backgrounded = False
         # A newer request to the same agent supersedes its answers not yet heard.
         self.room.floor.drop(lambda r: r.agent == self.id and r.kind != "notice", "superseded")
         if self._chain is not None and self._chain.kind != "notice":
@@ -161,6 +166,25 @@ class AgentVoice:
     @property
     def idle(self) -> bool:
         return not self.busy and self._ops.empty()
+
+    @property
+    def answer_pending(self) -> bool:
+        """A request to this agent is still being answered out loud."""
+        return not self.backgrounded and (self._queued_requests > 0 or self._answering)
+
+    def yield_floor(self) -> list[Reply]:
+        """The owner turned to another agent: stop this conversation, keep the work.
+
+        Its answers not heard yet are dropped, and the rest of its response chain
+        runs without being spoken: tool calls already made finish, jobs keep
+        running, and its memory is truncated to what was heard. Notices (finished
+        jobs) are not touched; they wait for a natural break. The next request to
+        this agent ends the silent chain, as any newer request does.
+        """
+        self.backgrounded = True
+        dropped = self.room.floor.drop(lambda r: r.agent == self.id and r.kind != "notice", "handed_over", cancel=False)
+        self.room.changed()
+        return dropped
 
     # ------------------------------------------------------------ notices
     def add_notice(self, job_id: str, text: str, *, earlier: bool) -> None:
@@ -219,8 +243,8 @@ class AgentVoice:
                 if item["job_id"] not in self._finished_notices:
                     self._finish_notice(item["job_id"], "dismissed")
         self._recent_cut = (0.0, [])
-        if self._chain is not None:
-            self._chain.cancelled = True
+        if self._chain is not None and not self.backgrounded:
+            self._chain.cancelled = True  # a silent chain is background work: stop does not end it
 
     def _mark(self, job_id: str, state: str) -> None:
         self.room.trace.record("announcement", phase=state, job_id=job_id, agent=self.id)
@@ -231,6 +255,7 @@ class AgentVoice:
         while True:
             kind, payload = await self._ops.get()
             self.busy = True
+            self._answering = kind in ("request", "greeting")
             try:
                 if self.session is None or self.session.closed:
                     await self._reconnect()
@@ -252,7 +277,7 @@ class AgentVoice:
                         self.notices.appendleft(item)
                         self._mark(item["job_id"], "pending")
             finally:
-                self.busy = False
+                self.busy = self._answering = False
                 self.room.changed()
 
     async def _reconnect(self) -> None:
@@ -326,11 +351,15 @@ class AgentVoice:
             if reply.cancelled or self.session is None or self.session.closed:
                 break
             if reply.state == "done":
-                # Cut off mid-chain (the user spoke): the rest is a new reply that waits its turn.
                 reply.generating = False
-                reply = self.room.floor.new_reply(self.id, reply.kind, reply.job_ids)
+                if self.backgrounded:
+                    # Handed over: finish the chain's work without speaking.
+                    reply = self.room.floor.background_reply(self.id, reply.kind, reply.job_ids)
+                else:
+                    # Cut off mid-chain (the user spoke): the rest is a new reply that waits its turn.
+                    reply = self.room.floor.new_reply(self.id, reply.kind, reply.job_ids)
+                    self.room.reply_created(reply)
                 self._chain = reply
-                self.room.reply_created(reply)
         self.room.floor.generation_done(reply)
         await self._settle(reply)
 
