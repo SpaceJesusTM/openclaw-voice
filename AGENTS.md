@@ -14,8 +14,10 @@ agent-to-agent collaboration, and eventual shared human/agent rooms.
   Never read, copy, mount, or overwrite production Tari tokens, state or private mail.
 - No secrets, OAuth callback URLs, API keys, Google JSON, mutable state or
   raw sensitive voice transcripts in Git. All belong in ignored `.local/`.
-- Don't invent or silently select an OpenAI model. Foundation target is the
-  strict `openai/gpt-6.1-sol` route. Verify actual account entitlement and inference.
+- Tari's initial default model is `openai/gpt-6.1-sol` with no automatic
+  fallbacks in the demo. Models, credentials and tools are configurable through
+  OpenClaw's native management; do not impose a platform-wide model or OAuth profile.
+  Verify actual inference separately from configured model/auth status.
 - Google Gmail/Calendar are read-only until owner-requested later expansion.
 - Reuse Pipecat transport, audio, workers and OpenClaw Gateway primitives
   rather than rebuilding generic framework functionality.

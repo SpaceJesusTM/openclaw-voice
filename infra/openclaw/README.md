@@ -10,7 +10,7 @@ See [the complete setup and verification checklist](../../docs/openclaw-setup.md
 python3 infra/openclaw/manage.py init --timezone America/Toronto
 python3 infra/openclaw/manage.py start
 python3 infra/openclaw/manage.py doctor
-python3 infra/openclaw/manage.py openclaw models auth login --provider openai --device-code --profile-id openai:clawvoice --agent tari
+python3 infra/openclaw/manage.py openclaw models auth login --provider openai --device-code --agent tari
 ```
 
 The `openai/gpt-6.1-sol` model route is configured, **not authenticated**
@@ -19,7 +19,8 @@ until you complete ChatGPT/Codex OAuth locally. The Gateway listens at
 manually approved OAuth profile; the complete procedure is in the setup guide.
 
 Only Gmail and Calendar **reads** are available; write helpers were removed.
-Primary and utility models are Sol; fallbacks and API keys are disabled.
+Tari starts with Sol and no automatic model fallbacks. OpenClaw manages models,
+utility selection and credentials natively; ClawVoice imposes no model/profile allowlist.
 See the [audit results](../../docs/openclaw-audit.md). To keep future personalization flexible, voice identity,
 agent display name, and multi-agent routing belong to the future ClawVoice
 application layer.

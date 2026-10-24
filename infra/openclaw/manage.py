@@ -60,7 +60,7 @@ def write_if_absent(path: Path, data: str, mode: int = 0o600) -> None:
         handle.write(data)
 
 
-def load_env(enforce_policy: bool = True) -> dict[str, str]:
+def load_env(check_google: bool = True) -> dict[str, str]:
     path = owned_path(LOCAL / "runtime.env")
     if not path.is_file():
         raise RuntimeError("Missing local configuration. Run 'init' first.")
@@ -79,40 +79,12 @@ def load_env(enforce_policy: bool = True) -> dict[str, str]:
     port = int(data.get("CLAWVOICE_OPENCLAW_PORT", DEFAULT_PORT))
     if port < 1024 or port > 65535:
         raise RuntimeError("Invalid local Gateway port")
-    if not enforce_policy:
-        return data
-    if data.get("CLAWVOICE_MODEL") != DEFAULT_MODEL:
-        raise RuntimeError("Foundation requires openai/gpt-6.1-sol; no substitute model is enabled")
-    if data.get("TARI_CALENDAR_WRITES") != "0":
+    if check_google and data.get("TARI_CALENDAR_WRITES") != "0":
         raise RuntimeError("Calendar writes must remain disabled in foundation stage")
-    if any(value for key, value in data.items() if key.endswith("API_KEY") or key in (
-            "OPENAI_ACCESS_TOKEN", "GOG_ACCESS_TOKEN", "GOG_AUTH_MODE")):
-        raise RuntimeError("Use isolated OAuth credentials; API keys and direct tokens are disabled")
     for key in ("OPENCLAW_GATEWAY_TOKEN", "GOG_KEYRING_PASSWORD"):
         if not re.fullmatch(r"[a-f0-9]{64}", data.get(key, "")):
             raise RuntimeError("Missing or invalid generated private credential")
     return data
-
-
-def validate_policy() -> None:
-    """Check the installed config too: runtime.env alone does not select a model."""
-    load_env()
-    config = json.loads(owned_path(LOCAL / "state/openclaw.json").read_text())
-    defaults = config["agents"]["defaults"]
-    if defaults["model"] != {"primary": DEFAULT_MODEL, "fallbacks": []}:
-        raise RuntimeError("Installed model must be GPT-6.1 Sol with no fallbacks")
-    entry = config["agents"]["entries"]
-    if set(entry) != {"tari"} or "model" in entry["tari"]:
-        raise RuntimeError("Foundation requires one agent without model overrides")
-    if defaults.get("utilityModel") != DEFAULT_MODEL or entry["tari"].get("modelPolicy") != {"allow": [DEFAULT_MODEL]}:
-        raise RuntimeError("Utility calls and session overrides must stay on GPT-6.1 Sol")
-    if defaults.get("models", {}).get(DEFAULT_MODEL, {}).get("agentRuntime") != {"id": "openclaw"}:
-        raise RuntimeError("Foundation requires the embedded OpenClaw OAuth runtime")
-    auth = config.get("auth", {})
-    profile = auth.get("profiles", {}).get("openai:clawvoice", {})
-    if (auth.get("order", {}).get("openai") != ["openai:clawvoice"] or
-            profile.get("provider") != "openai" or profile.get("mode") != "oauth"):
-        raise RuntimeError("Foundation requires the dedicated subscription OAuth profile")
 
 
 def initialize(timezone: str, name: str, port: int) -> None:
@@ -178,7 +150,7 @@ def initialize(timezone: str, name: str, port: int) -> None:
 
 def compose_args(*command: str) -> tuple[list[str], dict[str, str]]:
     # An unsafe configuration must never prevent stopping its own container.
-    data = load_env(enforce_policy=not command or command[0] != "stop")
+    data = load_env(check_google=not command or command[0] != "stop")
     # Do not inherit production OpenClaw, Tari, Google or other model credentials.
     process_env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("COMPOSE_", "OPENCLAW_", "TARI_", "GOG_",
@@ -233,7 +205,6 @@ def check_gateway() -> None:
 
 
 def chat(prompt: str, conversation: str) -> None:
-    validate_policy()
     data = load_env()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", conversation):
         raise RuntimeError("Use a short opaque conversation ID")
@@ -284,7 +255,6 @@ def main() -> int:
         initialize(args.timezone, args.name, args.port)
         return 0
     if args.action == "start":
-        validate_policy()
         return run_compose("up", "-d", "--build", "--wait", "--wait-timeout", "90", "openclaw")
     if args.action == "stop":
         return run_compose("stop", "openclaw")
@@ -296,10 +266,8 @@ def main() -> int:
         if rest:
             parser.error("Unexpected arguments")
         data = load_env()
-        validate_policy()
         if not shutil.which("docker"):
             raise RuntimeError("Docker CLI is missing")
-        print("Configured agent model:", data.get("CLAWVOICE_MODEL", DEFAULT_MODEL), flush=True)
         print("Isolated project:", data["COMPOSE_PROJECT_NAME"])
         print("Local Gateway port:", data["CLAWVOICE_OPENCLAW_PORT"])
         print("Google account configured:", bool(data.get("TARI_GOOGLE_ACCOUNT")))

@@ -1,9 +1,38 @@
 # OpenClaw foundation audit — 2026-10-23
 
-**Verdict: READY TO CONFIGURE.** The isolated Docker foundation works. Subscription
-entitlement, real Sol inference/session continuity, Google grants and agent-driven
-reads remain unverified until the owner completes sign-in. Voice bridging should
-wait for those acceptance checks. Start with [owner setup, step 2](openclaw-setup.md#2-sign-in-to-chatgptcodex).
+**Current status after configuration simplification:** real GPT-6.1 Sol inference
+and two-turn conversation continuity pass through the authenticated local Gateway.
+Native session metadata records provider `openai` and model `gpt-6.1-sol`; native
+`models status --agent tari --json --check` passes. Google authorization and reads
+remain pending. Continue with [Google owner setup](openclaw-setup.md#3-register-and-authorize-a-different-google-account).
+
+The manager's custom `validate_policy()` and model/auth environment enforcement
+were removed. Tari keeps Sol as its initial default with no automatic fallbacks.
+Utility selection, session model overrides, additional agents and authentication
+profiles use OpenClaw's native configuration. The template no longer forces a
+utility model, model allowlist or OAuth profile ID. Existing OAuth credentials
+and profile selection were preserved.
+
+The actual blocked config had Sol primary/utility already configured, but its
+model allowlist also contained `openai/*`. The custom validator rejected that
+broader native configuration. No custom migration machinery was added. The active
+installation was adjusted with OpenClaw's own `config unset` for only
+`agents.defaults.utilityModel` and `agents.entries.tari.modelPolicy`, with an
+ignored private backup. Before restarting/chatting, byte checks confirmed that
+the env, Google store, session and workspace files were untouched; all other
+configuration, including OAuth and Gateway auth, was identical.
+
+Validation after simplification: **25 offline tests pass**, including legacy config
+chat compatibility, state/permission isolation and Google read-only protections.
+Native configuration schema and model/auth readiness pass; Docker startup/health
+and the authenticated HTTP boundary pass. A fresh two-turn Gateway conversation
+successfully recalls a fictional phrase. No Google reads or production Tari
+operations were performed. The disposable demo remains running.
+
+## Original audit snapshot
+
+The following records the earlier foundation audit. Its strict model/profile
+checks and pending-inference status are superseded by the update above.
 
 ## Scope and findings
 

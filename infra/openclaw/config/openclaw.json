@@ -9,7 +9,6 @@
       "models": {
         "openai/gpt-6.1-sol": { "agentRuntime": { "id": "openclaw" } }
       },
-      "utilityModel": "openai/gpt-6.1-sol",
       "userTimezone": "America/Toronto",
       "sandbox": {
         "mode": "off"
@@ -18,7 +17,6 @@
     "entries": {
       "tari": {
         "name": "Tari",
-        "modelPolicy": { "allow": ["openai/gpt-6.1-sol"] },
         "workspace": "/home/node/.openclaw/workspace",
         "identity": {
           "name": "Tari"
@@ -28,12 +26,6 @@
         }
       }
     }
-  },
-  "auth": {
-    "profiles": {
-      "openai:clawvoice": { "provider": "openai", "mode": "oauth" }
-    },
-    "order": { "openai": ["openai:clawvoice"] }
   },
   "gateway": {
     "mode": "local",

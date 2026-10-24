@@ -6,8 +6,9 @@ Only Gmail and Calendar reads are integrated.
 
 **Current checkpoint:** Docker build, startup, schema, health, authentication
 boundary and isolated storage passed on macOS/arm64. The audit-created demo is
-running at `127.0.0.1:18939`. No ChatGPT or Google account is connected.
-Continue at step 2 on this checkout. See the [audit evidence](openclaw-audit.md).
+running at `127.0.0.1:18939`. ChatGPT OAuth, real Sol inference and two-turn
+continuity pass on this checkout; continue at step 3 for Google setup.
+Fresh installations continue at step 2. See the [audit evidence](openclaw-audit.md).
 
 ## 1. Fresh installation
 
@@ -34,9 +35,9 @@ container port is 18789. For a fresh installation choose another free port with
 `init --port 19501` if needed. Repeating init preserves credentials, config and
 workspace content; it does **not** apply later template changes. For an older
 installation, review and merge template changes into private config/workspace
-before starting. The manager rejects incompatible model/OAuth policy instead of
-replacing private files. Customize personality in the private `IDENTITY.md` and
-`SOUL.md` after initialization.
+before starting. OpenClaw validates its own configuration schema; the manager
+does not impose model or authentication policy. Customize personality in the
+private `IDENTITY.md` and `SOUL.md` after initialization.
 
 No production Tari directory, host Codex home or host Google store is mounted
 or imported. The foundation runs independently of the voice experiments.
@@ -46,7 +47,7 @@ or imported. The foundation runs independently of the voice experiments.
 Run in **your own interactive terminal**:
 
 ```bash
-python3 infra/openclaw/manage.py openclaw models auth login --provider openai --device-code --profile-id openai:clawvoice --agent tari
+python3 infra/openclaw/manage.py openclaw models auth login --provider openai --device-code --agent tari
 ```
 
 Follow the displayed sign-in instructions yourself. Never paste device codes,
@@ -62,11 +63,19 @@ This demo explicitly selects the embedded OpenClaw runtime, which uses its inter
 ChatGPT/Codex transport with the selected OAuth profile. It does not depend on
 automatic native Codex app-server installation.
 
-Primary and utility models are Sol, model fallbacks are empty, and the agent
-model policy allows only Sol. Do **not** add `--set-default`: onboarding can
-recommend a different model. The manager rejects API keys, direct access tokens,
-a changed primary, fallbacks, or write-enabled Google configuration. There is
-no API-key billing fallback.
+Tari initially uses **GPT-6.1 Sol** with automatic model fallbacks disabled.
+Models, utility-model selection, session overrides, authentication profiles and
+per-agent tools belong to OpenClaw's native configuration. ClawVoice does not
+require a particular utility model, model allowlist or OAuth profile name.
+Use the forwarded `openclaw models ...` and `openclaw config ...` commands to
+manage them. `CLAWVOICE_MODEL` is an initialization default, not the active
+configuration's source of truth. Existing installations keep their working login.
+
+Do not add `--set-default` during this demo's sign-in if you want to keep Sol as
+Tari's default: onboarding can recommend another model. This demo uses the existing
+ChatGPT OAuth credentials and has no API-key backup configured. Future agents may
+use explicitly configured credentials; host model/Google credentials are never
+inherited automatically into the demo container.
 
 OAuth credentials persist in this installation's `/home/node/.openclaw` state
 mount. In this release credential/session storage includes SQLite databases under
@@ -92,13 +101,13 @@ The manager reads the server-side Gateway token privately.
 For an explicit live provider probe after sign-in:
 
 ```bash
-python3 infra/openclaw/manage.py openclaw models status --agent tari --probe --probe-provider openai --probe-profile openai:clawvoice --json
+python3 infra/openclaw/manage.py openclaw models status --agent tari --probe --probe-provider openai --json
 ```
 
 This uses your subscription allowance. Before OAuth, Sol is configured but
 unavailable and `--check` fails: expected, not a passing model test. A catalog
-entry does not prove account entitlement. If your account rejects Sol, stop for
-an explicit account/model decision; do not choose a substitute or add an API key.
+entry does not prove account entitlement. If your account rejects Sol, make an
+explicit account/model decision before changing the configuration; no substitute is selected automatically.
 
 After chats succeed, test persistence:
 
@@ -213,7 +222,7 @@ python3 infra/openclaw/manage.py openclaw --help
 python3 infra/openclaw/manage.py stop
 ```
 
-`doctor` validates installed policy, Compose and the actual OpenClaw schema,
+`doctor` validates Compose and the actual OpenClaw schema,
 reports gog's version, checks HTTP health, rejection without a token, and acceptance
 of an authenticated malformed request without model inference. It does not test
 OAuth entitlement, Google scopes, inference or semantic memory search.

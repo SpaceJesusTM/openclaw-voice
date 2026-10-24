@@ -9,7 +9,7 @@ OpenClaw agents. Voice is powered by **Boson Higgs Realtime 1.5 Preview**
 - [x] Direct Higgs 1.5 realtime test — `experiments/higgs-realtime-1.5/`
 - [x] Pipecat + Higgs 1.5 experiment — `experiments/pipecat-higgs-1.5/`
 - [ ] Standalone OpenClaw demo agent with ChatGPT/Codex auth, Gmail and Calendar
-      reads — Docker foundation validated; owner OAuth and live acceptance pending
+      reads — Docker and real Sol conversations validated; Google authorization/reads pending
 - [ ] Server-side Pipecat/OpenClaw bridge with hot context and recent-result cache
 - [ ] Multiple persistent agents, distinct voices, name routing and collaboration
 - [ ] Optional multi-person shared conversations

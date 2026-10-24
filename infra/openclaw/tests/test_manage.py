@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 BASE = Path(__file__).resolve().parents[1]
@@ -55,7 +55,6 @@ class FoundationBootstrapTests(unittest.TestCase):
         self.assertEqual(env_path.read_text(), original)
         self.assertEqual(json.loads((self.root / ".local/state/openclaw.json").read_text()),
                          config)
-        manager.validate_policy()
 
     def test_reject_bad_port_and_name(self):
         with self.assertRaises(RuntimeError):
@@ -79,23 +78,12 @@ class FoundationBootstrapTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY", env)
         self.assertNotIn("GOG_ACCOUNT", env)
 
-    def test_reject_billing_model_and_write_changes(self):
+    def test_google_writes_still_rejected(self):
         manager.initialize("UTC", "Demo", 19501)
         path = self.root / ".local/runtime.env"
-        original = path.read_text()
-        for text in (original + "OPENAI_API_KEY=example\n",
-                     original.replace("TARI_CALENDAR_WRITES=0", "TARI_CALENDAR_WRITES=1"),
-                     original.replace("openai/gpt-6.1-sol", "openai/another-model")):
-            path.write_text(text)
-            with self.assertRaises(RuntimeError):
-                manager.load_env()
-        path.write_text(original)
-        config_path = self.root / ".local/state/openclaw.json"
-        config = json.loads(config_path.read_text())
-        config["agents"]["defaults"]["model"]["fallbacks"] = ["openai/another-model"]
-        config_path.write_text(json.dumps(config))
+        path.write_text(path.read_text().replace("TARI_CALENDAR_WRITES=0", "TARI_CALENDAR_WRITES=1"))
         with self.assertRaises(RuntimeError):
-            manager.validate_policy()
+            manager.load_env()
 
     def test_init_repairs_permissions_without_overwriting(self):
         manager.initialize("UTC", "Demo", 19501)
@@ -114,14 +102,27 @@ class FoundationBootstrapTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             manager.initialize("UTC", "Demo", 19501)
 
-    def test_accept_oauth_login_identity_metadata(self):
+    def test_legacy_config_chat_uses_native_gateway_without_rewriting_state(self):
         manager.initialize("UTC", "Demo", 19501)
         path = self.root / ".local/state/openclaw.json"
         config = json.loads(path.read_text())
-        config["auth"]["profiles"]["openai:clawvoice"]["email"] = "demo@example.test"
-        config["auth"]["profiles"]["openai:clawvoice"]["displayName"] = "Demo"
+        # Old installations can omit utilityModel and modelPolicy entirely;
+        # account/profile names and additional agents belong to OpenClaw.
+        config["agents"]["defaults"].pop("utilityModel", None)
+        config["agents"]["entries"]["tari"].pop("modelPolicy", None)
+        config["auth"] = {"profiles": {"openai:owner": {"provider": "openai", "mode": "oauth"}}}
+        config["agents"]["entries"]["other"] = {"model": "example/custom-model"}
         path.write_text(json.dumps(config))
-        manager.validate_policy()
+        before = path.read_bytes()
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"choices":[{"message":{"content":"Hello!"}}]}'
+        with patch.object(manager.urllib.request, "urlopen", return_value=response) as call, patch("builtins.print") as output:
+            manager.chat("Hello Tari!", "legacy-test")
+        request = call.call_args.args[0]
+        self.assertEqual(json.loads(request.data)["model"], "openclaw/tari")
+        self.assertTrue(request.get_header("Authorization").startswith("Bearer "))
+        output.assert_called_once_with("Hello!")
+        self.assertEqual(path.read_bytes(), before)
 
     def test_nested_help_reaches_actual_runtime_cli(self):
         with patch("sys.argv", ["manage.py", "openclaw", "models", "auth", "login", "--help"]), patch.object(manager, "run_compose", return_value=0) as run:
@@ -129,7 +130,7 @@ class FoundationBootstrapTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[-5:],
                          ("/app/openclaw.mjs", "models", "auth", "login", "--help"))
 
-    def test_can_stop_own_container_with_invalid_policy(self):
+    def test_can_stop_own_container_with_google_writes_misconfigured(self):
         manager.initialize("UTC", "Demo", 19501)
         path = self.root / ".local/runtime.env"
         path.write_text(path.read_text().replace("TARI_CALENDAR_WRITES=0", "TARI_CALENDAR_WRITES=1"))
