@@ -46,6 +46,14 @@ npm run web
   with something like "I can help with that". About 5–6 s from when you stop.
 - **Failures:** 1.5 sometimes fails a response (`upstream_error`). A failed
   overseer decision, or an agent reply that produced no audio, is retried once.
+- **Background tasks:** ask any agent for work ("Coder, code up a login page in
+  the background"). When a task finishes or needs your OK, **whoever you're
+  talking to** tells you at the next natural pause ("By the way, Coder has the
+  login page ready and wants your OK"), or in first person if it's their own
+  task. Answer out loud (the overseer hears it and passes it on), or with
+  Approve / Deny on the page's Tasks panel.
+  Tasks are fake timers for now; start the `web-fast-tasks` launch config
+  (`SELECTOR_TASK_SCALE=0.3`) to make them quick.
 
 ## Cost
 
@@ -60,8 +68,9 @@ tokens; check the real spend on Boson's
 
 ## Tools
 
-- `npx tsx tools/probe/selectorClient.ts [port]`: talks to a running server
-  with synthesized speech, the way the page does, and prints what happens.
+- `npx tsx tools/probe/selectorClient.ts [port] [routing|tasks]`: talks to a
+  running server with synthesized speech, the way the page does, and prints
+  what happens. `tasks` runs a background task through approval and done.
 - `npm run probe`: checks the live API behavior the design depends on
   ([docs/probe-results.md](docs/probe-results.md)). The selector's own probes
   (`vadToggle`, `cancelEarly`, `responseIds`, `transcriptLength`) are in

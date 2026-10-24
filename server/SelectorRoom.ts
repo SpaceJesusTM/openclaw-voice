@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { AGENT_NAMES, CALL_AGENT, OVERSEER_PROMPT, PERSONAS, parseCall, type AgentName } from "../src/agent/selectorAgents";
+import { AGENT_NAMES, AGENT_TOOLS, OVERSEER_PROMPT, OVERSEER_TOOLS, PERSONAS, parseAnswer, parseCall, parseStartTask, type AgentName } from "../src/agent/selectorAgents";
 import { DEFAULT_LEVEL_GATE, LevelGate } from "../src/audio/LevelGate";
 import { CHUNK_SAMPLES, concat, msOf, samplesOf } from "../src/audio/pcm";
 import { MODEL, SERVER, functionCallOutput, responseCreate, textItem, type ServerEvent } from "../src/realtime/events";
@@ -7,6 +7,7 @@ import { costOf, sumUsage } from "../src/realtime/pricing";
 import { RealtimeSession, type SessionLog } from "../src/realtime/RealtimeSession";
 import { buildSessionConfig } from "../src/realtime/sessionConfig";
 import { SelectorVoice, type Reply } from "./SelectorVoice";
+import { TaskBoard, type Task, type TaskAlert } from "./TaskBoard";
 
 /**
  * Higgs 1.5 for the overseer, as for the agents. Higgs 1 decided faster (~0.5 s
@@ -38,6 +39,8 @@ const WRAP_UP_DEFAULT_MS = 900;
  * every reply ~1.5 s after you stopped.
  */
 const DRAFT_AFTER_MS = 200;
+/** A natural gap: nobody has spoken for this long. Pending alerts are announced then. */
+const ALERT_GAP_MS = 1200;
 
 /**
  * The agent selector demo, one per browser tab, after Boson's basic Pipecat
@@ -56,11 +59,16 @@ const DRAFT_AFTER_MS = 200;
  * speech; otherwise it's dropped and the agent replies fresh. The VAD stays
  * the one authority on when your turn ends.
  *
+ * Background tasks: any agent can start one (start_task) and pass on your
+ * answer to any task's approval request (answer_approval). When a task
+ * finishes or needs approval, the alert goes on one room-level queue, and
+ * whoever you're talking to at the next natural gap tells you about it.
+ *
  * Wire protocol over the WebSocket:
  *   tab -> server  binary: mic PCM16 24 kHz
- *                  JSON {type:"start"} | {type:"say", text} | {type:"pick", name} | {type:"diag", ...}
+ *                  JSON {type:"start"} | {type:"say", text} | {type:"pick", name} | {type:"approve", id, approve} | {type:"diag", ...}
  *   server -> tab  binary: the active agent's audio, PCM16 24 kHz, paced at real time
- *                  JSON {type:"status"|"ready"|"active"|"speaking"|"hearing"|"user"|"said"|"overseer"|"clear"|"usage"|"error", ...}
+ *                  JSON {type:"status"|"ready"|"active"|"speaking"|"hearing"|"user"|"said"|"overseer"|"tasks"|"announce"|"clear"|"usage"|"error", ...}
  */
 export class SelectorRoom {
   private overseer: RealtimeSession | null = null;
@@ -99,6 +107,23 @@ export class SelectorRoom {
   private heard: string[] = [];
   /** The overseer's decision on this turn has already been retried once. */
   private overseerRetried = false;
+  /**
+   * The answer to an approval request belongs to the agent who asked it. Owners
+   * of approval requests just heard (`asked`), and of the ones your current turn
+   * is answering (`answering`): the overseer can't swap to them for that turn.
+   * Its tool description said so, and it still swapped to Coder on "Yes, approve it".
+   */
+  private approvals = { asked: new Set<AgentName>(), answering: new Set<AgentName>(), replied: false };
+  private board = new TaskBoard(
+    (a) => this.onTaskAlert(a),
+    (tasks) => this.send({ type: "tasks", tasks }),
+  );
+  /** The common alert queue: task news waiting for a natural gap. */
+  private alerts: TaskAlert[] = [];
+  /** The reply announcing alerts right now, and which ones. */
+  private announcing: { reply: Reply; alerts: TaskAlert[] } | null = null;
+  /** When agent audio last went out, for spotting a natural gap. */
+  private lastPlayedAt = 0;
   private ticker: NodeJS.Timeout | null = null;
   private startedAt = 0;
   private started = false;
@@ -121,13 +146,18 @@ export class SelectorRoom {
       const session = await RealtimeSession.connect(
         p.name,
         this.apiKey,
-        buildSessionConfig({ instructions: p.prompt, modality: "audio", voice: p.voice, model: MODEL }),
+        buildSessionConfig({ instructions: p.prompt, modality: "audio", voice: p.voice, model: MODEL, tools: AGENT_TOOLS }),
         slog,
         MODEL,
       );
       this.voices.set(
         p.name,
-        new SelectorVoice(p, session, { audio: (r, pcm) => this.onAgentAudio(r, pcm), ended: (r) => this.onReplyEnded(r) }, (m) => this.log(m)),
+        new SelectorVoice(
+          p,
+          session,
+          { audio: (r, pcm) => this.onAgentAudio(r, pcm), ended: (r) => this.onReplyEnded(r), toolCall: (r) => this.onToolCall(r) },
+          (m) => this.log(m),
+        ),
       );
       this.watchClose(session);
       if (this.closed) return void (await this.close());
@@ -136,7 +166,7 @@ export class SelectorRoom {
     this.overseer = await RealtimeSession.connect(
       "overseer",
       this.apiKey,
-      buildSessionConfig({ instructions: OVERSEER_PROMPT, modality: "text", model: OVERSEER_MODEL, turnDetection: VAD, transcribe: true, tools: [CALL_AGENT] }),
+      buildSessionConfig({ instructions: OVERSEER_PROMPT, modality: "text", model: OVERSEER_MODEL, turnDetection: VAD, transcribe: true, tools: OVERSEER_TOOLS }),
       slog,
       OVERSEER_MODEL,
     );
@@ -218,6 +248,7 @@ export class SelectorRoom {
     for (const v of this.voices.values()) void v.note(note);
     this.overseer.send(textItem(note));
     this.overseerRetried = false;
+    this.newUserTurn();
     if (!this.overseer.generating) this.overseer.send(responseCreate());
     this.reply(this.active, undefined, { stoppedAt: Date.now(), drafted: false });
   }
@@ -229,7 +260,7 @@ export class SelectorRoom {
   }
 
   diag(report: Record<string, unknown>): void {
-    this.log(`diag page=${JSON.stringify(report)} server=${JSON.stringify({ active: this.active, playing: !!this.current, queuedMs: msOf(this.queued.length), turn: this.turn, draft: !!this.draft, gate: this.gate.last })}`);
+    this.log(`diag page=${JSON.stringify(report)} server=${JSON.stringify({ active: this.active, playing: !!this.current, queuedMs: msOf(this.queued.length), turn: this.turn, draft: !!this.draft, alerts: this.alerts.length, gate: this.gate.last })}`);
   }
 
   private onOverseer(e: ServerEvent): void {
@@ -245,6 +276,7 @@ export class SelectorRoom {
       this.send({ type: "hearing", on: false });
     } else if (e.type === SERVER.audioCommitted) {
       this.overseerRetried = false;
+      this.newUserTurn();
       this.onUserTurn();
     } else if (e.type === SERVER.responseDone) {
       // The 1.5 preview fails some responses outright ("upstream_error", status
@@ -263,11 +295,18 @@ export class SelectorRoom {
         this.log(`user said: ${text}`);
         this.send({ type: "user", text });
       }
+    } else if (e.type === SERVER.functionCallArgsDone && e.name === "answer_approval") {
+      this.log(`overseer answer_approval ${String(e.arguments ?? "")}`);
+      const ok = this.answerFromOverseer(String(e.arguments ?? ""));
+      o.send(functionCallOutput(String(e.call_id ?? ""), JSON.stringify({ ok })));
     } else if (e.type === SERVER.functionCallArgsDone) {
       const call = parseCall(String(e.arguments ?? ""));
       o.send(functionCallOutput(String(e.call_id ?? ""), JSON.stringify({ ok: !!call, talking_now: call?.agent ?? this.active })));
       this.log(`overseer call_agent ${String(e.arguments ?? "")}`);
-      if (call) this.switchTo(call.agent, call.reason, "overseer");
+      if (call && this.approvals.answering.has(call.agent)) {
+        this.log(`overseer's switch to ${call.agent} ignored: you're answering an approval request ${this.active} asked`);
+        this.send({ type: "overseer", kind: "stay", agent: this.active, reason: `you were answering ${this.active}'s question`, by: "overseer" });
+      } else if (call) this.switchTo(call.agent, call.reason, "overseer");
     } else if (e.type === SERVER.outputTextDone) {
       const text = String(e.text ?? "").trim();
       if (text) this.send({ type: "overseer", kind: "text", text });
@@ -298,8 +337,7 @@ export class SelectorRoom {
     if (keep && d) {
       this.draft = null;
       if (this.current) this.cut("new reply");
-      this.current = d.reply;
-      this.queued = concat(d.reply.audio);
+      this.play(d.reply);
       this.log(`user turn over: ${this.active}'s draft plays (${msOf(this.queued.length)} ms of audio ready)`);
     } else {
       this.log(`user turn over: ${this.active} replies fresh`);
@@ -367,10 +405,133 @@ export class SelectorRoom {
     return r.state === "done" ? Math.min(end, total) : end;
   }
 
-  /** Make `r` the reply being played, with whatever audio it already has. */
+  /** Make `r` the reply being played, with whatever audio it already has. Its tool calls take effect now. */
   private play(r: Reply): void {
     this.current = r;
     this.queued = concat(r.audio);
+    this.handleCalls(r);
+  }
+
+  /** You clicked Approve or Deny on the Tasks panel. */
+  approve(id: number, approve: boolean): void {
+    this.answerTask(id, approve, "with a button");
+  }
+
+  /**
+   * A reply's tool calls act only once it's played: a held draft that's
+   * dropped (you kept talking) must not start a task you never heard agreed to.
+   */
+  private onToolCall(r: Reply): void {
+    if (r === this.current) this.handleCalls(r);
+  }
+
+  private handleCalls(r: Reply): void {
+    for (const c of r.calls) {
+      if (c.handled) continue;
+      c.handled = true;
+      this.log(`${r.agent} called ${c.name} ${c.args}`);
+      if (c.name === "start_task") {
+        const { title, owner } = parseStartTask(c.args, r.agent);
+        const { task, created } = this.board.start(owner, title);
+        if (created) c.did = owner === r.agent ? `you started working on "${task.title}" in the background` : `you got ${cap(owner)} started on "${task.title}" in the background`;
+        if (created) this.notifyAll(`(Note: background task #${task.id} "${task.title}" started; ${owner} is doing it.)`);
+        else this.log(`task #${task.id} "${task.title}" is already under way; not starting it twice`);
+      }
+    }
+  }
+
+  /** The overseer heard you answer an approval request. */
+  private answerFromOverseer(args: string): boolean {
+    const a = parseAnswer(args);
+    const pending = this.board.pending();
+    // No usable number but only one task waiting: that's the one.
+    const id = a && this.board.get(a.taskId)?.status === "needs_approval" ? a.taskId : pending.length === 1 ? pending[0].id : null;
+    if (!a || id === null) {
+      this.log(`answer_approval ignored: no matching task waiting (${args})`);
+      return false;
+    }
+    return this.answerTask(id, a.approve, `to ${this.active}`);
+  }
+
+  /** Answer a task's approval request; false if it wasn't waiting for one. */
+  private answerTask(id: number, approve: boolean, how: string): boolean {
+    const task = this.board.get(id);
+    if (!task || !this.board.answer(id, approve)) {
+      this.log(`task #${id}: nothing to answer`);
+      return false;
+    }
+    this.alerts = this.alerts.filter((a) => !(a.task.id === id && a.kind === "approval"));
+    this.log(`task #${id} ${approve ? "approved" : "denied"} ${how}`);
+    this.notifyAll(`(Note: the user ${approve ? "approved" : "said no to"} background task #${id} "${task.title}" (${how}).)`);
+    return true;
+  }
+
+  /**
+   * A user turn ended. If an approval was just asked, this turn starts the answer.
+   * The answer may span several turns (a pause splits a sentence), so it lasts
+   * until your first turn after the asking agent has replied to it: that reply
+   * can end before the overseer's decision on your answer arrives.
+   */
+  private newUserTurn(): void {
+    if (this.approvals.asked.size) {
+      this.approvals.answering = this.approvals.asked;
+      this.approvals.asked = new Set();
+      this.approvals.replied = false;
+    } else if (this.approvals.replied) {
+      this.approvals.answering = new Set();
+      this.approvals.replied = false;
+    }
+  }
+
+  /** Context for every agent and the overseer, in order with what they've heard. */
+  private notifyAll(note: string): void {
+    for (const v of this.voices.values()) void v.note(note);
+    this.overseer?.send(textItem(note));
+  }
+
+  /** A task needs attention. It waits on the queue for the next natural gap; the other agents and the overseer get a note now. */
+  private onTaskAlert(a: TaskAlert): void {
+    this.log(`task #${a.task.id} ${a.kind}: ${a.task.title} (${a.task.owner}'s)`);
+    if (a.kind === "denied") return; // you said no yourself; nothing to tell you
+    this.alerts.push(a);
+    const note = `(Note: background task #${a.task.id} "${a.task.title}" (${a.task.owner}'s) ${a.kind === "done" ? "is done" : `needs the user's approval: ${a.task.question}`})`;
+    for (const v of this.voices.values()) if (v.name !== this.active) void v.note(note);
+    this.overseer?.send(textItem(note));
+  }
+
+  /**
+   * At a natural gap (nobody speaking, nothing playing, lined up or drafted,
+   * for ALERT_GAP_MS), whoever you're talking to announces every pending alert
+   * in one short reply.
+   */
+  private maybeAnnounce(): void {
+    if (!this.alerts.length || this.announcing || this.current || this.lineup.length || this.draft || this.turn) return;
+    const now = Date.now();
+    if (now - this.lastSpeechAt < ALERT_GAP_MS || now - this.lastPlayedAt < ALERT_GAP_MS) return;
+    // Drop news that's out of date: an approval already answered with a button.
+    const alerts = this.alerts.filter((a) => a.kind !== "approval" || this.board.get(a.task.id)?.status === "needs_approval");
+    this.alerts = [];
+    if (!alerts.length) return;
+    // The agent you're talking to announces everything. Its own tasks it talks
+    // about as "I" ("I've got the signup form ready"), never by its own name.
+    const lines = alerts.map((a) => {
+      const own = a.task.owner === this.active;
+      const owner = cap(a.task.owner);
+      if (a.kind === "done") {
+        return own
+          ? `You finished your own background task #${a.task.id} "${a.task.title}". Say it in first person, like "By the way, I've finished the ${a.task.title}."`
+          : `${owner}'s background task #${a.task.id} "${a.task.title}" is done. Say it like "By the way, ${owner} finished the ${a.task.title}."`;
+      }
+      return own
+        ? `Your own background task #${a.task.id} "${a.task.title}" is ready to apply its changes and needs the user's OK. Ask in first person, like "By the way, I've got the ${a.task.title} ready. OK if I apply it?" ` +
+            `When they answer, just say you will (or won't) go ahead, like "Great, I'll apply it now."`
+        : `${owner}'s background task #${a.task.id} "${a.task.title}" needs the user's OK: ${a.task.question} Ask them, like "By the way, ${owner} has the ${a.task.title} ready and wants your OK to apply it." ` +
+            `When they answer, just say you'll let ${owner} know, like "Great, I'll tell ${owner} to go ahead." It's not your work, so never say you'll apply it.`;
+    });
+    this.log(`alert: ${this.active} announces ${alerts.map((a) => `#${a.task.id} ${a.kind}`).join(", ")}`);
+    this.send({ type: "announce", name: this.active, alerts: alerts.map((a) => ({ id: a.task.id, kind: a.kind, owner: a.task.owner, title: a.task.title })) });
+    this.reply(this.active, `(Note: news for the user now, briefly, in your own words. ${lines.join(" ")} Only this news; don't repeat earlier news.)`);
+    if (this.current) this.announcing = { reply: this.current, alerts };
   }
 
   /** `answers`: when you stopped talking, if this reply answers you (for the latency log). */
@@ -432,6 +593,7 @@ export class SelectorRoom {
         r.sent += chunk.length;
         if (this.ws.readyState === WebSocket.OPEN) this.ws.send(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength), { binary: true });
         sent = true;
+        this.lastPlayedAt = Date.now();
       }
       const over = r.sent >= limit || (this.queued.length === 0 && (r.state === "done" || r.cancelled));
       if (!over) break;
@@ -444,11 +606,43 @@ export class SelectorRoom {
       this.play(next);
     }
     this.sentLastTick = sent;
+    this.maybeAnnounce();
   }
 
   /** A reply ended, played out or cut: show it, let the other agents hear it, and tell the overseer. */
   private finish(r: Reply, cutOff: boolean): void {
     this.send({ type: "speaking", name: null });
+    if (this.announcing?.reply === r) {
+      // Cut off (you spoke over it): the news goes back on the queue for the next gap.
+      // Delivered only if it was heard out. Cut off (you spoke over it), or a reply
+      // that said nothing (it only called a tool): back on the queue for the next gap.
+      const heard = !cutOff && r.sent > 0;
+      if (!heard) this.alerts.unshift(...this.announcing.alerts);
+      else {
+        // Your next turn answers it, and that answer is for the agent who asked.
+        for (const a of this.announcing.alerts) {
+          if (a.kind !== "approval") continue;
+          this.approvals.asked.add(a.task.owner);
+          this.overseer?.send(
+            textItem(
+              `(Note: ${r.agent} just asked the user to approve ${a.task.owner}'s task #${a.task.id} "${a.task.title}". ` +
+                `When the user answers, call answer_approval with task_id ${a.task.id}. Their answer is for ${r.agent}; don't switch for it.)`,
+            ),
+          );
+        }
+      }
+      this.log(`alert ${heard ? "delivered" : cutOff ? "cut off, re-queued" : "not spoken, re-queued"}: ${this.announcing.alerts.map((a) => `#${a.task.id} ${a.kind}`).join(", ")}`);
+      this.announcing = null;
+    } else if (!cutOff && r.sent > 0 && this.approvals.answering.size) {
+      // The agent replied to your answer: from your next turn, swaps are allowed again.
+      this.approvals.replied = true;
+    }
+    // A reply that only called a tool said nothing: the same agent says what happened, in first person.
+    const did = r.calls.flatMap((c) => (c.did ? [c.did] : []));
+    if (!cutOff && r.sent === 0 && did.length) {
+      const v = this.voices.get(r.agent);
+      if (v) this.lineup.unshift(v.respond(`(Note: tell the user in one short sentence, in first person: ${did.join("; ")}.)`));
+    }
     const playedMs = msOf(r.sent);
     const text = (cutOff ? heardText(r.fragments, playedMs) : r.transcript || r.fragments.map((f) => f.text).join("")).trim();
     if (r.sent === 0 && !text) return;
@@ -504,6 +698,7 @@ export class SelectorRoom {
     }
     this.closed = true;
     if (this.ticker) clearInterval(this.ticker);
+    this.board.close();
     const sessions = [...[...this.voices.values()].map((v) => v.session), ...(this.overseer ? [this.overseer] : [])];
     this.voices.clear();
     this.overseer = null;
@@ -564,3 +759,5 @@ function heardText(fragments: { text: string; endMs: number }[], playedMs: numbe
   }
   return out;
 }
+
+const cap = (name: string) => name[0].toUpperCase() + name.slice(1);

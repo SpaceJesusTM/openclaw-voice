@@ -37,6 +37,10 @@ The roles are split cleanly:
 - **Swaps are handoffs, not cuts.** The old agent wraps up with a short line
   while the new one's reply generates. The new one then plays straight after,
   opening with something like "I can help with that" (lesson 9).
+- **Background news goes through whoever you're talking to.** Any agent can
+  start a background task. When one finishes or needs your OK, the alert goes on
+  one room-level queue, and the agent you're talking to tells you at the next
+  natural pause (see "Background tasks and the alert queue").
 
 ## Recipe: building a silent overseer
 
@@ -57,17 +61,20 @@ The roles are split cleanly:
    agent's wrap-up → its handoff line → new agent, all generated in parallel.
 7. **Retry server failures once**, and log every decision so problems can be
    found by reading, not guessing.
+8. **Background news on one queue, told by whoever you're talking to**, at a
+   natural pause, and only counted as told once it was actually heard.
 
 ## Code map
 
 | File | What it does |
 |---|---|
 | [server/SelectorRoom.ts](../server/SelectorRoom.ts) | The room: mic fan-out, overseer events, turn handling, drafts, swaps, playback pacer and lineup, relays, logging |
-| [server/SelectorVoice.ts](../server/SelectorVoice.ts) | One agent's voice session: operation queue, reply state machine, cancel and retry rules |
-| [src/agent/selectorAgents.ts](../src/agent/selectorAgents.ts) | Personas, the overseer prompt, the `call_agent` tool |
+| [server/SelectorVoice.ts](../server/SelectorVoice.ts) | One agent's voice session: operation queue, reply state machine, tool calls, cancel and retry rules |
+| [server/TaskBoard.ts](../server/TaskBoard.ts) | Background tasks (fake timers for now): start, approval, done; emits alerts |
+| [src/agent/selectorAgents.ts](../src/agent/selectorAgents.ts) | Personas, the overseer prompt and its tools (`call_agent`, `answer_approval`), and the agents' `start_task` |
 | [src/audio/LevelGate.ts](../src/audio/LevelGate.ts) | Adaptive speech/silence gate on mic chunks (pause detection for drafts) |
-| [web/index.html](../web/index.html), `app.js`, `style.css` | The page: mic, playback, tiles, overseer decisions, transcript with per-reply latency |
-| [tools/probe/selectorClient.ts](../tools/probe/selectorClient.ts) | Headless end-to-end test: talks to the room with synthesized speech |
+| [web/index.html](../web/index.html), `app.js`, `style.css` | The page: mic, playback, tiles, overseer decisions, Tasks panel with Approve / Deny, transcript with per-reply latency |
+| [tools/probe/selectorClient.ts](../tools/probe/selectorClient.ts) | Headless end-to-end test with synthesized speech: `routing` and `tasks` scenarios |
 | `tools/probe/vadToggle.ts`, `cancelEarly.ts`, `responseIds.ts`, `transcriptLength.ts` | Probes for the Higgs behaviors in the next section |
 
 ## What Higgs Realtime does (probed, 2026-10-24)
@@ -174,6 +181,89 @@ Every bug here was found by reading a log: the stale listener, the missing
 `tools/probe/selectorClient.ts` drives the page headlessly with synthesized
 speech, so a change can be tested end to end without a person talking.
 
+## Background tasks and the alert queue
+
+**The idea.** Agents don't only talk: any of them can kick off background work
+("Coder, code up a login page"). When that work finishes or needs your OK, you
+hear about it from **whoever you're talking to right now**, not from the agent
+that did the work, and never mid-sentence. So the conversation keeps one
+voice, and news comes in at a natural pause, the way a colleague would say "oh,
+by the way…".
+
+**How it works.**
+
+- Every agent has one tool, `start_task(title, for_agent?)`, which starts work
+  for itself or another agent ("have Coder build it" works while you talk to
+  Planner).
+- **The overseer makes the control decisions**: `call_agent` (routing) and
+  `answer_approval(task_id, decision)`. When an approval request is heard, it
+  gets a note naming the task, and your spoken answer becomes its tool call.
+  The agent you're talking to just acknowledges ("Great, I'll tell Coder to go
+  ahead"). Agents talk; the silent overseer acts.
+- `TaskBoard` runs the tasks. For now they're **fake timers**: each works for a
+  while, then finishes or asks for approval (every other task asks).
+  `SELECTOR_TASK_SCALE` shortens the timings for tests (the `web-fast-tasks`
+  launch config uses 0.3).
+- When a task needs attention, an **alert** goes on one room-level queue. The
+  other agents and the overseer get a context note right away.
+- **Natural gap**: nothing playing, lined up or drafted, you're not mid-turn,
+  and 1.2 s of quiet from everyone. Then the agent you're talking to gets
+  one reply that bundles all pending news.
+- **Delivered only once heard.** If you talk over the announcement, or the reply
+  says nothing (it only called a tool), the news goes back on the queue for
+  the next gap. An approval answered in the meantime (say, with the page's
+  button) is dropped from the queue, not announced.
+- You answer **by voice to whoever you're talking to** (the overseer hears it
+  and passes it on), or with **Approve / Deny buttons** on the page's Tasks panel.
+
+**Lessons from testing it** (synthesized speech plus the browser, 2026-10-24):
+
+- **Voice agents are unreliable at talking *and* acting in one response.** With
+  `answer_approval` on the agents, Planner heard "Yes, approve it", said "Great,
+  I'll apply it now", and never called the tool, so the task stayed stuck.
+  Approvals are a control decision like routing, so the silent overseer makes
+  them. It hears every word, never talks, and tool calls are its only job.
+  `start_task` stayed with the agents: they called it reliably in every test.
+
+- **Own task: "I", not its own name.** When the agent you're talking to owns the
+  task, it must speak as itself: "By the way, I've got the signup form ready. OK
+  if I apply it?", then "Great, I'll apply it now", never "Coder has…" or "I've
+  passed your approval along to Coder". For someone else's task it's the
+  reverse: "Great, I'll tell Coder to go ahead", never "I'll apply it". The
+  announcement note spells out both: how to ask, and how to acknowledge your
+  answer. A tool-only reply's spoken follow-up says exactly what happened, in first person.
+- **Give tool choices explicit names.** With `approve: true/false`, a clear
+  "Yes, approve it, go ahead" came through as `false`, and the agent said "I've
+  passed your no to Coder". An enum, `decision: "approve" | "deny"`, fixed it.
+- **Say when *not* to start a task.** "Let's plan the launch" made an agent
+  start a "launch plan" job. The tool now says: only when the user explicitly
+  asks for something to be made or done as a separate job, never for things
+  you can talk through.
+- **The same request reaches two agents.** Planner started the job for Coder,
+  and Coder, once swapped in, started it again. The task board treats the same
+  owner and title, while one is running or waiting, as the same task.
+- **Tool calls in a draft act only when the draft is played.** A held draft that
+  gets dropped (you kept talking) must not start a task or answer an approval
+  you never heard agreed to.
+- **A function-call item can't be truncated.** A reply's first output item can
+  be the function call, not the spoken message. Truncating it is rejected
+  ("Only role based items are supported"), so only message items are tracked
+  for truncation.
+- **The answer belongs to the agent who asked.** Planner asked "Coder wants
+  your OK, go ahead?", you said "Yes, approve it", and the overseer swapped to
+  Coder, because the approval was "about" Coder's work. Its tool description
+  already said approvals aren't a reason to switch, so this is a room rule now:
+  once an approval request is heard, the overseer can't swap to that task's
+  owner until your first turn after the asking agent has replied to your
+  answer. The rule spans split turns, and the reply can end before the
+  overseer's decision arrives. The overseer gets a note saying so too. The cost: "yes, and put Coder on"
+  in the same breath stays with the asker; ask again on your next turn.
+- **Gaps race with you.** An announcement can start just as you start
+  talking. It's cut and re-queued, and told at the next gap. That's expected.
+- **Fake tasks get invented details.** With nothing real behind a "done", an
+  agent described what it "built" ("fields, validation, a clean layout").
+  Real task results will fix that.
+
 ## Latency
 
 Where things stand (synthesized speech, 2026-10-24, measured server-side; the
@@ -232,6 +322,10 @@ Lessons from drafting:
   in proportion to how much of it was heard.
 
 ## Open questions and next steps
+
+- **Real background work.** Swap the fake timers for real runs (for example a
+  Claude Agent SDK run in a workspace folder, whose permission prompts become
+  approval alerts), and pass real results into the "done" news.
 
 - **Get the right agent sooner on a swap.** Swaps are no longer silent, but the
   new agent arrives 5–6 s after you stop, because the old agent has already

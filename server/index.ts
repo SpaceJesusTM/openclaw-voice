@@ -71,6 +71,7 @@ wss.on("connection", (ws) => {
     if (msg.type === "start") room.start().catch(fail);
     else if (msg.type === "say") room.say(String(msg.text ?? "")).catch(fail);
     else if (msg.type === "pick") room.pick(String(msg.name ?? ""));
+    else if (msg.type === "approve") room.approve(Number(msg.id), msg.approve === true);
     else if (msg.type === "diag") room.diag(msg);
   });
   ws.on("close", () => {

@@ -24,6 +24,8 @@ const els = {
   say: $("say"),
   sayText: $("say-text"),
   transcript: $("transcript"),
+  tasksPanel: $("tasks-panel"),
+  tasks: $("tasks"),
 };
 
 let ws = null;
@@ -141,6 +143,9 @@ function connect() {
     else if (msg.type === "overseer") addDecision(msg);
     else if (msg.type === "clear") playback?.port.postMessage("clear");
     else if (msg.type === "usage") showUsage(msg);
+    else if (msg.type === "tasks") showTasks(msg.tasks);
+    else if (msg.type === "announce")
+      addNote(`${msg.name} is passing on news: ${msg.alerts.map((a) => `${a.owner}'s task #${a.id} ${a.kind === "done" ? "is done" : "needs your OK"}`).join("; ")}`);
     else if (msg.type === "error") onError(msg.text);
   };
   ws.onclose = () => {
@@ -259,6 +264,43 @@ function append(li) {
   const stick = t.scrollTop + t.clientHeight >= t.scrollHeight - 40;
   t.append(li);
   if (stick) t.scrollTop = t.scrollHeight;
+}
+
+const TASK_STATUS = { running: "working", needs_approval: "needs your OK", done: "done", denied: "stopped" };
+
+/** The Tasks panel: one row per background task, with Approve / Deny while it waits on you. */
+function showTasks(tasks) {
+  els.tasksPanel.hidden = tasks.length === 0;
+  els.tasks.replaceChildren(
+    ...tasks.map((t) => {
+      const li = document.createElement("li");
+      li.className = `task ${t.status}`;
+      li.style.setProperty("--c", COLORS[t.owner] ?? "var(--muted)");
+      li.innerHTML = `
+        <div class="task-head"><b class="owner"></b><span class="title"></span><span class="chip"></span></div>
+        <div class="task-detail"></div>`;
+      li.querySelector(".owner").textContent = t.owner;
+      li.querySelector(".title").textContent = `#${t.id} ${t.title}`;
+      li.querySelector(".chip").textContent = TASK_STATUS[t.status] ?? t.status;
+      li.querySelector(".task-detail").textContent = t.question ?? t.result ?? "";
+      if (t.status === "needs_approval") {
+        const row = document.createElement("div");
+        row.className = "task-actions";
+        for (const [label, approve] of [["Approve", true], ["Deny", false]]) {
+          const b = document.createElement("button");
+          b.textContent = label;
+          if (approve) b.className = "primary";
+          b.addEventListener("click", () => {
+            if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "approve", id: t.id, approve }));
+            row.querySelectorAll("button").forEach((x) => (x.disabled = true));
+          });
+          row.append(b);
+        }
+        li.append(row);
+      }
+      return li;
+    }),
+  );
 }
 
 const usd = (n) => `$${n < 0.01 ? n.toFixed(4) : n.toFixed(3)}`;

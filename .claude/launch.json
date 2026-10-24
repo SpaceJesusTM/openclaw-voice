@@ -8,6 +8,13 @@
       "port": 3000
     },
     {
+      "name": "web-fast-tasks",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "web"],
+      "env": { "SELECTOR_TASK_SCALE": "0.3" },
+      "port": 3000
+    },
+    {
       "name": "higgs-playground",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "C:/Users/ttuki/Desktop/openclaw-voice-smoke-next/experiments/higgs-realtime-1.5", "run", "dev"],

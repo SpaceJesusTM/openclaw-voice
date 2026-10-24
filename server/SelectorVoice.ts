@@ -1,6 +1,6 @@
 import type { AgentName, Persona } from "../src/agent/selectorAgents";
 import { CHUNK_SAMPLES, decodeB64Pcm, msOf } from "../src/audio/pcm";
-import { SERVER, responseCancel, responseCreate, textItem, truncateItem, type ServerEvent } from "../src/realtime/events";
+import { SERVER, functionCallOutput, responseCancel, responseCreate, textItem, truncateItem, type ServerEvent } from "../src/realtime/events";
 import type { RealtimeSession } from "../src/realtime/RealtimeSession";
 
 /**
@@ -42,8 +42,19 @@ export interface Reply {
   sent: number;
   /** Set when stopped at a point still ahead of playback: the agent's memory is truncated there, not at `sent`. */
   keepSamples: number | null;
+  /** Tool calls in this reply. The room acts on each once, when the reply is played (`handled`). */
+  calls: ToolCall[];
   /** Resolves when the reply is done. */
   readonly ended: Promise<void>;
+}
+
+export interface ToolCall {
+  name: string;
+  args: string;
+  callId: string;
+  handled: boolean;
+  /** What acting on it did, in the caller's words, if it changed anything (a task started or answered). */
+  did?: string;
 }
 
 export interface VoiceSink {
@@ -51,6 +62,8 @@ export interface VoiceSink {
   audio(r: Reply, pcm: Int16Array): void;
   /** The reply is done (any outcome). */
   ended(r: Reply): void;
+  /** A tool call arrived in this reply. */
+  toolCall(r: Reply): void;
 }
 
 /**
@@ -115,6 +128,7 @@ export class SelectorVoice {
       askedAt: 0,
       sent: 0,
       keepSamples: null,
+      calls: [],
       ended: new Promise<void>((res) => (finish = res)),
     };
     this.finishers.set(r, finish);
@@ -174,7 +188,11 @@ export class SelectorVoice {
     }
     const id = String(e.response_id ?? (e.response as { id?: string } | undefined)?.id ?? "");
     if (!r || r.state !== "live" || !id || id !== r.responseId) return;
-    if (e.type === SERVER.outputItemAdded && !r.itemId) r.itemId = String((e.item as { id?: string })?.id ?? "");
+    // Only the spoken message item: a reply's first item can be a function call,
+    // and truncating that is rejected ("Only role based items are supported").
+    if (e.type === SERVER.outputItemAdded && !r.itemId && (e.item as { type?: string })?.type === "message") {
+      r.itemId = String((e.item as { id?: string }).id ?? "");
+    }
     else if (e.type === SERVER.outputAudioDelta) {
       const pcm = decodeB64Pcm(String(e.delta ?? ""));
       r.audio.push(pcm);
@@ -182,6 +200,10 @@ export class SelectorVoice {
       else if (!r.cancelSent) this.sendCancel(r);
     } else if (e.type === SERVER.audioTranscriptLength) r.fragments.push({ text: String(e.delta ?? ""), endMs: Number(e.length_ms ?? 0) });
     else if (e.type === SERVER.audioTranscriptDone) r.transcript = String(e.transcript ?? "");
+    else if (e.type === SERVER.functionCallArgsDone) {
+      r.calls.push({ name: String(e.name ?? ""), args: String(e.arguments ?? ""), callId: String(e.call_id ?? ""), handled: false });
+      this.sink.toolCall(r);
+    }
     else if (e.type === SERVER.responseDone) {
       const status = String((e.response as { status?: string } | undefined)?.status ?? "");
       // The 1.5 preview fails some responses outright ("upstream_error"). One that
@@ -211,6 +233,9 @@ export class SelectorVoice {
     clearTimeout(this.graceTimers.get(r));
     this.graceTimers.delete(r);
     if (r.cancelled) this.truncate(r);
+    // Close the tool loop so the conversation stays valid. No follow-up response:
+    // the room acts on the calls, and asks for speech itself if the reply had none.
+    for (const c of r.calls) this.session.send(functionCallOutput(c.callId, JSON.stringify({ ok: true })));
     this.finishers.get(r)?.();
     this.finishers.delete(r);
     this.sink.ended(r);
