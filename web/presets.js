@@ -2,6 +2,33 @@
 // "hybrid" (1.5 voice, 1 mind); see docs/model-comparison.md for the tradeoff.
 export const PRESETS = [
   {
+    // Opened by demo-thoughts.bat (?preset=thoughts). Minds on Higgs 1 (hybrid)
+    // keep decisions fast and reliable; costs ~$0.043/min vs ~$0.007 voice-only.
+    id: "thoughts",
+    label: "Ship or slip, with private thoughts",
+    scene: "Two weeks before launch. The new checkout flow works, but its automated test suite isn't finished.",
+    agents: [
+      {
+        name: "Maya",
+        voice: "chloe",
+        model: "hybrid",
+        mind: true,
+        role: "the product lead.",
+        goal: "Launch on the date with the smallest safe scope; slipping loses the partner deal.",
+        facts: "a major partner's promotion is tied to the launch date.",
+      },
+      {
+        name: "Theo",
+        voice: "marcus",
+        model: "hybrid",
+        mind: true,
+        role: "the senior engineer who owns checkout.",
+        goal: "Don't ship checkout without automated tests on the payment paths.",
+        facts: "last quarter an untested checkout change double-charged 300 customers.",
+      },
+    ],
+  },
+  {
     id: "planner-worker",
     label: "Planner + worker (they go off and do the job)",
     scene: "A quick call to plan your week. Once the agents know what they need, they leave to do their part.",

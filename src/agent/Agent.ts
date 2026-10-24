@@ -1,5 +1,6 @@
 import { decodeB64Pcm } from "../audio/pcm";
 import { MODEL, SERVER, functionCallOutput, responseCreate, textItem, truncateItem, type ServerEvent } from "../realtime/events";
+import { emptyUsage, type Usage } from "../realtime/pricing";
 import { RealtimeSession, type SessionLog } from "../realtime/RealtimeSession";
 import { buildSessionConfig } from "../realtime/sessionConfig";
 import { listNames } from "../room/Journal";
@@ -80,6 +81,11 @@ export class Agent {
 
   get hasMind(): boolean {
     return this.mind !== null;
+  }
+
+  /** Tokens spent so far: what it said (voice) and what it thought (mind). */
+  get usage(): { voice: Usage; mind: Usage } {
+    return { voice: this.voice.usage, mind: this.mind?.usage ?? emptyUsage() };
   }
 
   static async create(config: AgentConfig, room: RoomContext, apiKey: string, log: SessionLog): Promise<Agent> {

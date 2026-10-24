@@ -189,8 +189,13 @@ els.preset.addEventListener("change", () => {
   save();
 });
 
+// ?preset=<id> (used by demo-thoughts.bat) wins over the remembered setup.
+const asked = PRESETS.find((p) => p.id === new URLSearchParams(location.search).get("preset"));
 const saved = loadSaved();
-if (saved?.agents?.length >= MIN_AGENTS) {
+if (asked) {
+  els.preset.value = asked.id;
+  loadSetup({ ...asked, you: saved?.you });
+} else if (saved?.agents?.length >= MIN_AGENTS) {
   els.preset.value = "saved";
   loadSetup(saved);
 } else {
@@ -343,6 +348,7 @@ function connect(startMsg) {
     else if (msg.type === "ready") onReady(msg);
     else if (msg.type === "journal") addEntry(msg.entry);
     else if (msg.type === "active") setActive(msg.names);
+    else if (msg.type === "usage") showUsage(msg);
     else if (msg.type === "error") onError(msg.text);
   };
   ws.onclose = () => {
@@ -408,6 +414,31 @@ function humanTile() {
   t.innerHTML = `<div class="tile-head"><div class="avatar">Y</div><div><div class="who">You</div><div class="what"></div></div></div>`;
   t.querySelector(".what").textContent = micStream ? "your mic" : "typing only";
   return t;
+}
+
+const usd = (n) => `$${n < 0.01 ? n.toFixed(4) : n.toFixed(3)}`;
+
+/** Running cost: header total, and speech vs thoughts on each agent's tile. */
+function showUsage(u) {
+  const cost = $("cost");
+  cost.hidden = false;
+  const perMin = u.minutes > 0.2 ? ` · ${usd(u.total / u.minutes)}/min` : "";
+  cost.textContent = `≈ ${usd(u.total)}${perMin}`;
+  cost.title = `Speech (voices) ${usd(u.voiceCost)} + thoughts (minds) ${usd(u.mindCost)}. Estimated from the token usage Higgs reports, at Boson's published rates; your billing dashboard is the source of truth.`;
+  for (const a of u.agents) {
+    const t = [...els.tiles.children].find((x) => x.dataset.name === a.name);
+    if (!t) continue;
+    let line = t.querySelector(".cost");
+    if (!line) {
+      line = document.createElement("div");
+      line.className = "cost";
+      t.append(line);
+    }
+    const tokens = (x) => x.inputTokens + x.outputTokens;
+    line.textContent =
+      `speech ${usd(a.voiceCost)} (${tokens(a.voice).toLocaleString()} tok)` +
+      (a.mind.responses ? ` · thoughts ${usd(a.mindCost)} (${tokens(a.mind).toLocaleString()} tok)` : "");
+  }
 }
 
 function setActive(names) {

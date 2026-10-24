@@ -84,6 +84,16 @@ textarea {
   border: 1px solid var(--line);
   color: var(--muted);
 }
+.bar-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.tile .cost {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+}
 .pill.live {
   color: var(--speaking);
   border-color: var(--speaking);

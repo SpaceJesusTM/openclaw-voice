@@ -10,6 +10,7 @@ import {
   type ServerEvent,
 } from "./events";
 import { AUDIO_RATE } from "./events";
+import { addUsage, emptyUsage, type Usage } from "./pricing";
 
 const wsUrl = (model: string) => `wss://api.boson.ai/v1/realtime?model=${encodeURIComponent(model)}`;
 const MIN_COMMIT_SAMPLES = AUDIO_RATE / 10; // pad tiny buffers to 100 ms before committing
@@ -29,6 +30,8 @@ export class RealtimeSession {
   pendingSamples = 0;
   /** True between response.created and response.done. */
   generating = false;
+  /** Token usage reported by every response.done on this session. */
+  readonly usage: Usage = emptyUsage();
   private listeners = new Set<(e: ServerEvent) => void>();
 
   private constructor(
@@ -39,7 +42,10 @@ export class RealtimeSession {
     ws.on("message", (data) => {
       const evt = JSON.parse(data.toString()) as ServerEvent;
       if (evt.type === SERVER.responseCreated) this.generating = true;
-      if (evt.type === SERVER.responseDone) this.generating = false;
+      if (evt.type === SERVER.responseDone) {
+        this.generating = false;
+        addUsage(this.usage, (evt.response as { usage?: unknown } | undefined)?.usage);
+      }
       if (evt.type === SERVER.error) this.log(name, `error ${JSON.stringify(evt.error ?? evt)}`);
       for (const fn of [...this.listeners]) fn(evt);
     });

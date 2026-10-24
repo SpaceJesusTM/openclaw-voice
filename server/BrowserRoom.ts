@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import { Agent, type AgentConfig } from "../src/agent/Agent";
 import { AgentLoop, DEFAULT_LOOP_TIMING } from "../src/agent/AgentLoop";
 import { synthesize } from "../src/audio/tts";
+import { costOf } from "../src/realtime/pricing";
 import { AudioBus, type BusListener, type Tick } from "../src/room/AudioBus";
 import { Journal } from "../src/room/Journal";
 import { DEFAULT_LIVE_FEED, LiveFeed } from "../src/room/LiveFeed";
@@ -105,7 +106,19 @@ export class BrowserRoom implements BusListener {
     });
   }
 
+  /** Tokens and cost so far, per agent and in total, split into speech and thoughts. */
+  usageReport() {
+    const agents = this.agents.map((a) => {
+      const { voice, mind } = a.usage;
+      return { name: a.name, voice, mind, voiceCost: costOf(voice), mindCost: costOf(mind) };
+    });
+    const voiceCost = agents.reduce((n, a) => n + a.voiceCost, 0);
+    const mindCost = agents.reduce((n, a) => n + a.mindCost, 0);
+    return { agents, voiceCost, mindCost, total: voiceCost + mindCost, minutes: this.bus.elapsedMs() / 60_000 };
+  }
+
   onTick(t: Tick): void {
+    if (Math.round(t.at / 100) % 20 === 0) this.send({ type: "usage", ...this.usageReport() });
     if (t.active.some((n) => n !== this.name) && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(Buffer.from(t.others.buffer, t.others.byteOffset, t.others.byteLength), { binary: true });
     }
@@ -135,6 +148,13 @@ export class BrowserRoom implements BusListener {
 
   async close(): Promise<void> {
     if (this.closed && this.agents.length === 0) return;
+    if (this.started) {
+      const r = this.usageReport();
+      this.log(
+        `usage: voices $${r.voiceCost.toFixed(4)} + minds $${r.mindCost.toFixed(4)} = $${r.total.toFixed(4)} over ${r.minutes.toFixed(1)} min ` +
+          JSON.stringify(r.agents.map((a) => ({ name: a.name, voice: a.voice, mind: a.mind }))),
+      );
+    }
     this.closed = true;
     await this.bus.stop();
     const agents = this.agents.splice(0);

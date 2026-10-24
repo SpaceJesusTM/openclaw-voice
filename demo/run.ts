@@ -7,6 +7,8 @@
  *   npm run demo -- --agents 3         add Carol
  *   npm run demo -- --max-seconds 120 --max-agent-turns 4
  *   npm run demo -- --mind-model higgs-realtime     minds on Higgs 1, voices on .env's model
+ *   npm run demo -- --no-mind                       voice-only agents
+ * Ends with tokens and cost per agent (voice vs mind).
  *
  * Writes captures/demo-<time>.wav (what the room heard), .md (transcript with
  * every agent's private thoughts) and .log.
@@ -17,6 +19,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { Agent } from "../src/agent/Agent";
 import { AgentLoop, DEFAULT_LOOP_TIMING } from "../src/agent/AgentLoop";
 import { msOf, writeWav } from "../src/audio/pcm";
+import { costOf, sumUsage, type Usage } from "../src/realtime/pricing";
 import { loadApiKey, synthesize } from "../src/audio/tts";
 import { AudioBus } from "../src/room/AudioBus";
 import { Journal } from "../src/room/Journal";
@@ -56,8 +59,10 @@ async function main() {
   const journal = new Journal(clock, log);
 
   // --mind-model higgs-realtime: run minds on Higgs 1 (the voices stay on BOSON_REALTIME_MODEL).
+  // --no-mind: voice-only agents (each voice decides by speaking or staying silent).
   const mindModel = strArg("mind-model");
-  const configs = AGENTS.slice(0, n).map((c) => (mindModel ? { ...c, mindModel } : c));
+  const noMind = process.argv.includes("--no-mind");
+  const configs = AGENTS.slice(0, n).map((c) => ({ ...c, ...(mindModel ? { mindModel } : {}), ...(noMind ? { mind: false } : {}) }));
   log(`voicing ${HUMAN_LINES.length} human lines`);
   const lines = await Promise.all(HUMAN_LINES.map(async (text) => ({ text, samples: await synthesize(apiKey, text, HUMAN_VOICE) })));
 
@@ -94,8 +99,27 @@ async function main() {
     writeWav(`${base}.wav`, mix);
     writeFileSync(`${base}.md`, journal.markdown("Peer conversation"));
     log(`wrote ${base}.wav (${(msOf(mix.length) / 1000).toFixed(1)} s), ${base}.md, ${base}.log`);
+    logCost(agents, msOf(mix.length) / 60_000, log);
     await Promise.all(agents.map((a) => a.close()));
   }
+}
+
+/** Tokens and cost per agent, split into speech (voice) and thoughts (mind). */
+function logCost(agents: Agent[], minutes: number, log: (line: string) => void) {
+  const fmt = (u: Usage) =>
+    `${u.responses} responses, ${u.inputTokens} in (${u.cachedTokens} cached), ${u.outputTokens} out = $${costOf(u).toFixed(4)}`;
+  const voices: Usage[] = [];
+  const minds: Usage[] = [];
+  for (const a of agents) {
+    const { voice, mind } = a.usage;
+    voices.push(voice);
+    minds.push(mind);
+    log(`cost ${a.name} voice: ${fmt(voice)}${a.hasMind ? ` | mind: ${fmt(mind)}` : ""}`);
+  }
+  const v = sumUsage(...voices);
+  const m = sumUsage(...minds);
+  const total = costOf(v) + costOf(m);
+  log(`cost total: voices $${costOf(v).toFixed(4)} + minds $${costOf(m).toFixed(4)} = $${total.toFixed(4)} over ${minutes.toFixed(1)} min ≈ $${(total / Math.max(minutes, 0.01)).toFixed(4)}/min`);
 }
 
 main().catch((e) => {
