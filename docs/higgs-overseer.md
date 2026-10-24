@@ -1,8 +1,9 @@
-# Higgs Team overseer (PFinal 2 experiment)
+# Higgs Team overseer
 
-`feat/pfinal2-higgs-overseer` starts from PFinal 1 (`6cb8b17`), preserving the
-redesigned UI, real OpenClaw runtimes and shared speaking floor. Single-agent
-Tari/Astra sessions are unchanged. Reference: Jeff's `agent-selector-demo`
+The overseer is Team mode's default router: a silent Higgs Realtime session that
+hears each turn and selects an agent with a real `call_agent` tool call. It was built
+on the redesigned UI, real OpenClaw runtimes and shared speaking floor, and leaves
+single-agent sessions unchanged. Reference: Jeff's `agent-selector-demo`
 `docs/silent-overseer.md`, selector sources and Higgs probe findings.
 
 ## Run and roll back
@@ -18,14 +19,16 @@ CLAWVOICE_TEAM_ROUTER_MODE=overseer make dev
 
 Open <http://127.0.0.1:7860/?agent=team>, then Connect. Existing Boson credentials
 are reused; never copy credentials from production Tari. A backend already
-running does not need another start. See [GETTING_STARTED.md](GETTING_STARTED.md)
+running does not need another start. See the [README Quickstart](../README.md#quickstart)
 for first-time setup. Stop the foreground voice server with Ctrl+C.
 
-The flag is a **process environment variable**, read when the server/room starts.
-Restart the voice server to compare the original router:
+The flag is read from the process environment when the server and room start.
+`overseer` is the default. If `services/voice/.env` exists, the server loads it at
+startup and its values override shell variables, so set the flag there and restart
+the voice server to compare the original router:
 
 ```sh
-CLAWVOICE_TEAM_ROUTER_MODE=names make dev
+CLAWVOICE_TEAM_ROUTER_MODE=names    # in services/voice/.env
 ```
 
 Names mode runs the original `AddressBook` path, including bare-name follow-ups,

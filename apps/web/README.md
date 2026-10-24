@@ -5,9 +5,9 @@ http://127.0.0.1:7860 (`cd services/voice && make dev`). It uses native WebRTC
 to Pipecat's SmallWebRTC transport and RTVI messages; it never receives the
 Boson key or the OpenClaw Gateway token.
 
-The top bar lets you switch between **Tari** (personal assistant), **Astra** (coding
-assistant), and **Team** (Tari and Astra in one shared room, with automatic Higgs
-routing and optional explicit names). The experiment and name-only rollback are
+The top bar lets you switch between **Team** (every agent in one shared room, with
+automatic Higgs routing and optional explicit names), **Tari** (personal assistant),
+**Astra** (coding assistant) and **Jester** (entertainment, voice-only). The experiment and name-only rollback are
 documented in [higgs-overseer.md](../../docs/higgs-overseer.md).
 
 The whole app fits one window with no page scrollbar. Follow

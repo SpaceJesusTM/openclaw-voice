@@ -1,7 +1,9 @@
-# Chorus voice runtime (Priority 1)
+# Chorus voice runtime
 
-Team mode (several agents in one room, addressed by name) is described in
-[team-voice.md](team-voice.md).
+How one agent's voice connection, cache, jobs and interruptions work. Setup starts at
+the [README Quickstart](../README.md#quickstart). Team mode (several agents in one
+room, routed by a Higgs overseer or by name) is described in
+[team-voice.md](team-voice.md) and [higgs-overseer.md](higgs-overseer.md).
 
 Talk to a real OpenClaw agent with **Boson Higgs Realtime 1.5 Preview**
 (`higgs-realtime-1.5-preview`) over **Pipecat**, in your browser, on your Mac.
@@ -53,12 +55,15 @@ are recovered on the next start where the transport allows it (see below).
 | `BOSON_REALTIME_MODEL`, `BOSON_REALTIME_URL` | optional | Must stay the preview model/endpoint; anything else fails at startup |
 | `BOSON_VAD_THRESHOLD`, `BOSON_VAD_SILENCE_MS`, `BOSON_NOISE_REDUCTION` | optional | Boson turn-detection tuning |
 | `CLAWVOICE_AGENTS`, `CLAWVOICE_DEFAULT_AGENT` | optional | Which configured agents to serve |
+| `CLAWVOICE_TEAM_ROUTER_MODE` | optional, default `overseer` | Team routing: `overseer` (Higgs `call_agent` decisions) or `names` (name-only) |
 | `CLAWVOICE_VOICE_OVERRIDE` | optional | Override every agent's Boson voice |
 | `CLAWVOICE_IDLE_TIMEOUT_SECS` | optional, default 1800 | Silence before a voice session closes (jobs continue) |
 | `CLAWVOICE_PERSIST_TRACES` | optional, default true | Sanitized traces in ignored `services/voice/captures/` |
 
-See `services/voice/.env.example`. The browser only ever talks to the local
-Python server; it never receives the Boson key or the Gateway token.
+See `services/voice/.env.example`. Set these in `services/voice/.env`: the server
+loads it at startup and its values override shell variables of the same name, so
+restart after editing it. The browser only ever talks to the local Python server; it
+never receives the Boson key or the Gateway token.
 
 ### Optional: pair the WebSocket transport
 
@@ -241,25 +246,29 @@ and job store file.
 1. Provision the agent in its own OpenClaw installation (or as another agent on
    a Gateway you own) with its own credentials. Chorus never shares one
    agent's OAuth or mailbox with another.
-2. Copy `agents/astra.yaml` (the fixture example) to `agents/<id>.yaml`: set
-   identity, `openclaw.agent_id`, the Gateway URLs and `token_ref`, `helpers`,
-   `hot_context.topics`, `delegation.targets` and `receipt_types`, and write
-   `agents/<id>.md`.
+2. Copy `agents/astra.yaml` (a complete real agent) or `agents/fixture.yaml` (a
+   minimal offline example) to `agents/<id>.yaml`: set identity, `openclaw.agent_id`,
+   the Gateway URLs and `token_ref`, `helpers`, `hot_context.topics`,
+   `delegation.targets` and `receipt_types`, and write `agents/<id>.md`.
 3. Add it to `agents/team.yaml` (or run with `CLAWVOICE_AGENTS=<id>`), restart,
    and open `http://127.0.0.1:7860/?agent=<id>`.
 
-`agents/astra.yaml` is a complete second agent (coding assistant) with
-different topics (`project.active`, `tests.last`), targets, receipt type
-(`test_run`) and the generic `helper_lookup` verifier. Try it with fixtures:
+`agents/fixture.yaml` is a minimal second agent with different topics
+(`project.active`, `tests.last`), targets, receipt type (`test_run`) and the generic
+`helper_lookup` verifier. Try it against a fake Gateway. If `services/voice/.env`
+contains a `CLAWVOICE_AGENTS=` line (even an empty one), comment it out first: the
+file's values override the Makefile's `CLAWVOICE_AGENTS=fixture`.
 
 ```sh
 cd services/voice
 make fixture-gateway        # terminal 1: fake Gateway on 127.0.0.1:18999 (fixtures only)
-PORT=7861 make fixture-dev  # terminal 2: ClawVoice serving Astra
+PORT=7861 make fixture-dev  # terminal 2: Chorus serving only the fixture agent
 ```
 
-Priority 1 serves one agent per voice session; multi-agent rooms, name routing
-and collaboration are Priority 2 and are not implemented.
+An agent that needs no OpenClaw backend (like Jester) is a voice-only agent:
+`backend: voice`, see [team-voice.md](team-voice.md#voice-only-agents-jester). Every
+configured agent also joins Team mode ([team-voice.md](team-voice.md)). Agents do not
+collaborate with each other yet.
 
 ## Hot context
 

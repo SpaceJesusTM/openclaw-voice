@@ -1,14 +1,15 @@
-# Team mode: several real agents in one voice room (Priority 2a)
+# Team mode: several real agents in one voice room
 
-**PFinal 2 experiment:** `feat/pfinal2-higgs-overseer` defaults to intelligent Higgs
-routing. See [higgs-overseer.md](higgs-overseer.md) for the current event flow,
-launch commands, tests and limitations. The name-addressing behavior below is
-retained with `CLAWVOICE_TEAM_ROUTER_MODE=names`.
+Every configured agent (Tari, Astra and Jester in the demo) shares one browser
+connection. Agents can work on separate requests at the same time, and their replies
+take turns on one speaking floor. The one-on-one tabs are unchanged.
 
-Branch `feat/p2a-team-voice` (from `feat/astra-coding-agent`). Tari and Astra share one
-browser connection. You address either by name, both can work on separate requests
-at the same time, and their replies take turns on one speaking floor. The Tari-only
-and Astra-only modes are unchanged.
+**Routing.** By default a silent Higgs overseer picks the agent for each turn; see
+[higgs-overseer.md](higgs-overseer.md) for its event flow, tests and limitations. The
+name-addressing router described under [Addressing](#addressing) is used with
+`CLAWVOICE_TEAM_ROUTER_MODE=names`, and its explicit names also take priority in
+overseer mode. The diagram below shows that original router; the speaking floor,
+jobs, interruptions and voice-only agents work the same with either.
 
 Run it: [GETTING_STARTED.md](GETTING_STARTED.md#team-mode-tari-astra-and-jester-together).
 
@@ -160,11 +161,12 @@ mode (two seats, labels, routing chips, one connect) passed with no page errors.
 
 ## Known limitations and untested
 
-- Names are required for every new request; answering an agent's clarifying
-  question needs the name again ("Tari, tomorrow at three"), unless it follows a bare
-  name or continues within 1.5 s.
-- Routing depends on the transcript; a misheard name shows "not addressed" (tune
-  aliases). In Team mode agents receive the transcript, not your audio.
+- In names mode, names are required for every new request; answering an agent's
+  clarifying question needs the name again ("Tari, tomorrow at three"), unless it
+  follows a bare name or continues within 1.5 s. (The default overseer keeps the
+  current agent for follow-ups; see [higgs-overseer.md](higgs-overseer.md#limits).)
+- In names mode, routing depends on the transcript; a misheard name shows "not
+  addressed" (tune aliases). In Team mode agents receive the transcript, not your audio.
 - About 0.7 s more latency than single-agent mode (longer VAD silence, transcription
   before routing): roughly 2 s from the end of speech to first audio.
 - Any speech, even to nobody, interrupts the current speaker (single-agent policy).
