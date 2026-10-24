@@ -1,0 +1,93 @@
+# Tari: personal planning assistant backed by the isolated demo OpenClaw in
+# infra/openclaw (never the production Tari installation).
+id: tari
+display_name: Tari
+emoji: "🟢"
+color: "#22c55e"
+role_file: tari.md
+owner_scope: local-owner
+timezone: America/Toronto
+voice:
+  boson_voice: default
+
+openclaw:
+  agent_id: tari                     # OpenClaw agent; HTTP selector openclaw/tari
+  gateway:
+    ws_url: ws://127.0.0.1:18939     # loopback-only demo Gateway
+    http_url: http://127.0.0.1:18939
+    # Server-side reference to the Gateway token; the value never reaches the browser.
+    token_ref: envfile:infra/openclaw/.local/runtime.env#OPENCLAW_GATEWAY_TOKEN
+    transport: auto                  # WebSocket once this device is paired, otherwise HTTP
+    # Owner command to approve this ClawVoice device for the WebSocket transport.
+    pairing_hint: "python3 infra/openclaw/manage.py openclaw devices approve {request_id}"
+  session:
+    key_template: "agent:{agent_id}:clawvoice-{owner_scope}"
+  timeouts:
+    question_seconds: 180
+    change_seconds: 300
+
+plugins: [day_planner]
+
+# Trusted, deterministic OpenClaw-side read helpers (no model run). They exec
+# the agent's own bin/day-planner and bin/tari-google inside the demo container.
+helpers:
+  planner: ["{python}", "{repo}/infra/openclaw/manage.py", "planner"]
+  google: ["{python}", "{repo}/infra/openclaw/manage.py", "google"]
+
+hot_context:
+  defaults:
+    ttl_seconds: 120              # fresh window; refreshed at ~0.8x while a voice session is active
+    max_staleness_seconds: 900    # usable with an age disclosure
+    idle_refresh_seconds: 900     # refresh cadence when nobody is connected
+    read_wait_seconds: 3          # how long a voice read waits for a needed refresh
+  topics:
+    - key: planner.today
+      description: "today's day planner: Calendar events, planner blocks, commutes and a checklist summary"
+      resolver: planner_day
+      args: {day: today}
+    - key: planner.tomorrow
+      description: "tomorrow's day planner (Calendar events, planner blocks, commutes)"
+      resolver: planner_day
+      args: {day: tomorrow}
+    - key: calendar.today
+      description: "today's Google Calendar events only"
+      resolver: calendar_day
+      args: {day: today}
+    - key: calendar.next
+      description: "the next upcoming Calendar event or meeting"
+      resolver: calendar_next
+      args: {horizon_days: 3}
+    - key: checklist.focus
+      description: "checklist priority and in-progress tasks"
+      resolver: checklist_focus
+      ttl_seconds: 300
+    - key: jobs.recent
+      description: "background tasks in progress and recent results"
+      resolver: recent_jobs
+      args: {limit: 5}
+      ttl_seconds: 30
+      max_staleness_seconds: 120
+      idle_refresh_seconds: 300
+      read_wait_seconds: 1
+
+delegation:
+  targets: [calendar, planner, checklist, other]
+  clarify: >-
+    whether it is a Google Calendar event, a local planner block or a checklist
+    task, and the date, start and end time and title where they apply
+  receipt_types:
+    calendar_event:
+      verifier: calendar_event
+      args: {helper: google}
+      invalidates: [calendar.today, calendar.next, planner.today, planner.tomorrow]
+      format: '{"type":"calendar_event","action":"created|updated|deleted","calendar_id":"<calendar id, e.g. primary>","event_id":"<event id>"}'
+    planner_block:
+      verifier: planner_block
+      args: {helper: planner}
+      invalidates: [planner.today, planner.tomorrow]
+      format: '{"type":"planner_block","action":"added|moved|resized|renamed|removed","day":"YYYY-MM-DD","block_id":"<block id like b3>"}'
+    checklist_task:
+      verifier: checklist_task
+      args: {helper: planner}
+      invalidates: [checklist.focus, planner.today, planner.tomorrow]
+      format: '{"type":"checklist_task","action":"added|status|completed|reopened|renamed|removed","task_id":"<task id like t4>","status":"priority|start|in-progress|none (status changes only)"}'

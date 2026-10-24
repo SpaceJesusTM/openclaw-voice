@@ -26,10 +26,19 @@ agent-to-agent collaboration, and eventual shared human/agent rooms.
 
 ## Current milestone
 
-Foundation: isolated Docker OpenClaw, explicit ChatGPT/Codex OAuth, different
-Google account through its own desktop OAuth client, and verified Gmail/Calendar
-reads, user-requested Calendar management and the persistent Calendar-aware local
-planner/checklist. No voice-to-OpenClaw bridging in this milestone.
+Priority 1 is implemented in `services/voice/` and `apps/web/` (see
+`docs/voice.md`, `docs/voice-validation.md`): one real voiced agent (Tari) with
+a generic OpenClaw adapter, per-agent hot-context cache, nonblocking verified
+jobs and spoken completions, on top of the validated foundation (isolated Docker
+OpenClaw, ChatGPT/Codex OAuth, separate Google account, read-only Gmail,
+Calendar management, persistent planner/checklist).
+
+- Agent specifics belong in `services/voice/agents/*.yaml`; the core runtime
+  must not branch on agent names (a test enforces this).
+- "Done" requires an agent receipt plus independent read-back; never report an
+  accepted or unverified job as complete.
+- Keep the two Pipecat compatibility fixes and the exact preview model checks.
+- Multi-agent routing, collaboration and multi-user rooms are later priorities.
 
 When user input or account approval is required, stop at a documented checkpoint.
 Tests without real provider access are not proof of live integration.

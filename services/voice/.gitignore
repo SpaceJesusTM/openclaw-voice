@@ -1,0 +1,8 @@
+.bootstrap/
+.venv/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+captures/
+.local/
+.env

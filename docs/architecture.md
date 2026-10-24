@@ -2,49 +2,62 @@
 
 ClawVoice connects independent persistent OpenClaw agents to one coherent
 spoken environment. Higgs Realtime 1.5 Preview supplies native speech;
-Pipecat supplies realtime transport, tool and worker primitives; ClawVoice
-supplies application-specific identity, permissions, routing and caches.
+Pipecat supplies realtime transport, the realtime service, tools and the
+OpenClaw Gateway protocol client; ClawVoice supplies agent identity, fast
+context, verified nonblocking work and the speaking floor.
+
+Design intent: [ARCHITECTURE_AND_CONTRACTS.md](ARCHITECTURE_AND_CONTRACTS.md).
+Priority 1 implementation guide: [voice.md](voice.md).
 
 ## Current layout
 
 | Path | Responsibility | Current state |
 | --- | --- | --- |
-| `experiments/higgs-realtime-1.5/` | Direct API regression playground | Step 1 validated |
-| `experiments/pipecat-higgs-1.5/` | Pipecat speech-to-speech validation | Step 2 validated |
-| `infra/openclaw/` | Independent, minimal OpenClaw Gateway + Gmail/Calendar | Docker and Sol conversation validated; Google reads pending |
-| `apps/web/` | Future presentation-ready frontend | Reserved |
-| `services/voice/` | Production Pipecat/Boson bridge | Reserved |
-| `services/orchestrator/` | Agent identity, floor, delegated tasks | Reserved |
-| `services/context-cache/` | Per-agent hot context and recent results | Reserved |
-| `packages/agent-contracts/` | Typed cross-component data contracts | Reserved |
+| `experiments/higgs-realtime-1.5/` | Direct API regression playground | Step 1 validated, preserved |
+| `experiments/pipecat-higgs-1.5/` | Pipecat speech-to-speech validation | Step 2 validated, preserved |
+| `infra/openclaw/` | Independent OpenClaw Gateway + Gmail (read-only) / Calendar / planner | Validated foundation (Tari) |
+| `services/voice/` | ClawVoice runtime: Pipecat/Higgs voice, generic OpenClaw adapter, hot-context cache, background jobs, local API | **Priority 1 implemented** |
+| `apps/web/` | Local browser UI (single agent, orb, tasks, context, diagnostics) | **Priority 1 implemented** |
+| `services/context-cache/`, `services/orchestrator/` | Reserved names; P1 implements these as modules inside `services/voice` | Pointers only |
+| `packages/agent-contracts/` | Shared contracts | P1 contracts live in `services/voice/clawvoice` (see README) |
 
-## Foundation boundaries
+One local process hosts everything in Priority 1: per-connection Pipecat
+pipelines plus a process-level runtime (`AgentRuntime` per configured agent)
+holding the OpenClaw adapter, hot-context cache and job manager, so background
+work outlives voice connections.
 
-Only one demo OpenClaw agent (`tari`) is configured initially, with strictly
-separate `infra/openclaw/.local/` secrets and mutable state. It does not access
-the user's production Tari instance. Gmail read access and full Calendar management come from a
-different Google account after an explicit OAuth authorization.
+```text
+Browser --WebRTC/RTVI--> Pipecat transport -> Higgs 1.5 Preview (tools)
+                                   |  get_context      delegate_task / check_tasks / cancel_task
+                                   v                        v
+                        HotContextCache            JobManager -> OpenClawAgent -> Gateway (WS | HTTP)
+                          ^  resolvers                 |  verifiers (independent read-back)
+                          |                            |  invalidation -> announcement
+                       trusted read helpers <----------+
+```
 
-The current foundation does not depend on running the earlier Higgs experiments,
-nor does it connect voice to OpenClaw yet.
+## Boundaries kept
 
-For trusted future backend calls, the private Gateway exposes
-`POST /v1/chat/completions` at the loopback host port, selecting the agent
-with `"model": "openclaw/tari"` and using the Gateway's own Bearer token.
-Do not confuse that agent selector with the actual model
-`openai/gpt-6.1-sol`. Keep the Gateway token server-side. The `user` field is
-a stable session key, never an authentication credential.
+- The Gateway token and Boson key stay server-side; the UI receives neither.
+- Google/Calendar logic stays in the OpenClaw agent's skills; ClawVoice only
+  invokes the agent and reads results back through the agent's own helpers.
+- Speech interruption and job cancellation are separate controls.
+- Agent names, colors, voices, topics, helpers and verifiers are configuration
+  (`services/voice/agents/*.yaml`); the core runtime names no agent.
+- Only one demo OpenClaw agent (`tari`) is live; the production Tari
+  installation is never accessed.
 
-## Next milestones
+## Milestones
 
-1. ChatGPT OAuth and a two-turn Sol conversation are validated for the local demo.
-2. Owner authorizes the Gmail/Calendar read profile and separate full Calendar profile.
-3. Validate Google reads and a disposable Calendar create/edit/delete lifecycle through the CLI and agent.
-4. Add a server-side Pipecat to OpenClaw Gateway bridge, retaining nonblocking jobs.
-5. Priorities 2a/2b: multiple independent agents, distinct Higgs voices,
-   name routing, collaboration, and turn/floor coordination.
-6. Later: permissioned multi-person shared conversations.
+1. ~~Foundation: isolated OpenClaw, OAuth, Google reads/writes, planner.~~
+2. ~~Priority 1: one real voiced agent, generic adapter, per-agent hot context,
+   nonblocking verified jobs, spoken completions, local UI.~~
+3. Priority 2a: several independently configured agents with distinct voices,
+   name routing and one shared speaking floor (the floor coordinator and
+   registry are built to extend).
+4. Priority 2b: relevance routing and structured agent-to-agent collaboration.
+5. Priority 3: permissioned multi-person rooms with independently owned agents.
 
-**Avoid reimplementing** Pipecat's worker bus or audio transport. Keep a
-configurable per-agent cache of approved hot snapshots AND recent verified results;
-do not copy private account data into a shared-room cache.
+**Avoid reimplementing** Pipecat's transport or the Gateway protocol. Keep a
+configurable per-agent cache of approved hot snapshots and recent verified
+results; do not copy private account data into a shared-room cache.
