@@ -34,6 +34,41 @@ The roles are split cleanly:
   you'd said to the jester.
 - **The overseer owns turn-taking too.** It's the one session with server VAD;
   its `speech_started` / `committed` events drive everyone's turns (see below).
+- **Swaps are handoffs, not cuts.** The old agent wraps up with a short line
+  while the new one's reply generates. The new one then plays straight after,
+  opening with something like "I can help with that" (lesson 9).
+
+## Recipe: building a silent overseer
+
+1. **One router session, text only, with server VAD.** Give it one tool
+   (`call_agent`) and a prompt that says it never speaks. Its VAD is the single
+   authority on when your turn ends.
+2. **One voice session per agent, manual turns.** On each confirmed turn,
+   commit your audio into *every* agent's session, and ask only the active one
+   to reply. Relay each agent's heard audio to the others the same way.
+3. **Route on the router's tool call, judged on your turns only.** Agent
+   replies reach the router as context notes, never as a prompt to decide.
+4. **Track each reply as a state machine, matched by `response_id`**, with one
+   event listener per session. Serialize every operation on a session.
+5. **Pace playback on the server**, so you always know what was heard, and
+   truncate each agent's memory to exactly that.
+6. **Draft early, swap gracefully.** Start the active agent's reply at a short
+   pause, and play it only once the turn is confirmed. On a swap, line up old
+   agent's wrap-up → its handoff line → new agent, all generated in parallel.
+7. **Retry server failures once**, and log every decision so problems can be
+   found by reading, not guessing.
+
+## Code map
+
+| File | What it does |
+|---|---|
+| [server/SelectorRoom.ts](../server/SelectorRoom.ts) | The room: mic fan-out, overseer events, turn handling, drafts, swaps, playback pacer and lineup, relays, logging |
+| [server/SelectorVoice.ts](../server/SelectorVoice.ts) | One agent's voice session: operation queue, reply state machine, cancel and retry rules |
+| [src/agent/selectorAgents.ts](../src/agent/selectorAgents.ts) | Personas, the overseer prompt, the `call_agent` tool |
+| [src/audio/LevelGate.ts](../src/audio/LevelGate.ts) | Adaptive speech/silence gate on mic chunks (pause detection for drafts) |
+| [web/selector.html](../web/selector.html), `selector.js`, `selector.css` | The page: mic, playback, tiles, overseer decisions, transcript with per-reply latency |
+| [tools/probe/selectorClient.ts](../tools/probe/selectorClient.ts) | Headless end-to-end test: talks to the room with synthesized speech |
+| `tools/probe/vadToggle.ts`, `cancelEarly.ts`, `responseIds.ts`, `transcriptLength.ts` | Probes for the Higgs behaviors in the next section |
 
 ## What Higgs Realtime does (probed, 2026-10-24)
 
@@ -92,9 +127,11 @@ response nobody asked for is cancelled. A cut reply can't touch another one.
 memory to what you actually heard (`conversation.item.truncate`), and relay
 exactly that much to the other agents.
 
-**7. A barge-in or switch cuts, and the cut is relayed.** What you heard of a
-cut reply goes to the other agents as "(Note: … speaking, cut off.)" plus the
-audio. Everyone's view of the conversation matches what was actually said aloud.
+**7. A barge-in cuts, and the cut is relayed.** Talking over an agent stops it
+at once (and drops anything lined up after it). What you heard of a cut reply
+goes to the other agents as "(Note: … speaking, cut off.)" plus the audio.
+Everyone's view of the conversation matches what was actually said aloud.
+Swaps don't cut anymore (lesson 9).
 
 **8. A swapped-in agent announces itself.** Its handoff note asks it to open
 with a few words like "I can help with that". Then a swap sounds like someone
@@ -127,6 +164,9 @@ new agent's first try fail with `upstream_error` on both test swaps. The
 one-retry rule recovered it in time, just as the handoff line ended. Without
 that retry, this design would leave silence after the handoff.
 
+Like the openers, the handoff lines copied the prompt's example word for word
+("Actually, Coder's better with this one").
+
 **10. Debug from logs, not by asking.** Every decision is logged to
 `captures/web-*.log`: turns, drafts, switches, cuts, reply outcomes, latency.
 Every bug here was found by reading a log: the stale listener, the missing
@@ -136,7 +176,19 @@ speech, so a change can be tested end to end without a person talking.
 
 ## Latency
 
-Where the time goes, from when you stop talking (measured before drafting):
+Where things stand (synthesized speech, 2026-10-24, measured server-side; the
+browser adds ~0.1–0.2 s):
+
+| From when you stop talking | Before | Now |
+|---|---|---|
+| Same agent replies | ~1.5 s | **0.9–1.45 s** (early drafts) |
+| After a swap, new agent heard | 3.2–4.2 s (old agent hard-cut) | 5.3–6.0 s (old agent wraps up first) |
+| Gap between old agent's handoff line and the new agent | n/a | **~0.1 s** |
+
+The swap number went up on purpose: it now includes the old agent's wrap-up
+and handoff line, so the time is spent talking, not in silence.
+
+Where the time went, before any of these changes:
 
 | Step | Same agent | After a swap |
 |---|---|---|
@@ -163,17 +215,17 @@ Lessons from drafting:
 - Drafts are usually dropped *before* their first audio, which is the Higgs
   cancel case that never ends. Waiting it out stalled the next reply by
   ~1.4 s. Deferring the cancel to the first audio fixed that.
-- Measured (synthesized speech, 2026-10-24): same-agent replies are heard
-  **0.90–1.23 s** after you stop, down from ~1.5 s. The VAD is no longer the
+- Measured over three test runs (synthesized speech, 2026-10-24): same-agent
+  replies are heard **0.9–1.45 s** after you stop, down from ~1.5 s. The VAD is no longer the
   bottleneck (drafts are still producing first audio when it confirms the
   turn). What's left is the 200 ms pause trigger plus 1.5's ~0.65 s to first
   audio. Add ~0.1–0.2 s of browser capture and playback on top.
 - Pauses inside a sentence start drafts that get dropped: about 1–2 per turn in
   the tests. A dropped draft costs output tokens but no time.
-- **Drafting makes a wrong agent more audible on swaps.** The old agent's draft
-  is ready so fast that you hear it for 1–1.7 s before the overseer's
-  decision (0.5–1.9 s on 1.5) cuts it. Swaps are heard 3.3–4.0 s after you stop.
-  That's what parallel drafts (below) should fix.
+- **Drafting makes the old agent start answering before a swap.** Its draft is
+  ready so fast that it's been talking for 1–1.7 s by the time the overseer
+  decides (0.5–1.9 s on 1.5). At first that was hard-cut; now it wraps up
+  gracefully (lesson 9).
 - Transcript fragments are whole clauses (`length_ms` is where each one ends
   in the audio, often 4 s or more in). A reply cut early has no complete
   fragment, so the heard text is estimated from the fragment that was playing,
@@ -181,11 +233,16 @@ Lessons from drafting:
 
 ## Open questions and next steps
 
-- **Swaps are still slow** (overseer decision + a second first-audio wait).
-  Structural fix: at the pause, **all three agents draft in parallel**, then
-  play the overseer's pick and cancel the rest. Swap latency becomes the
-  slower of the two instead of their sum. The cost is about 2–3× output tokens
-  for the first second of each turn.
+- **Get the right agent sooner on a swap.** Swaps are no longer silent, but the
+  new agent arrives 5–6 s after you stop, because the old agent has already
+  started answering when the overseer decides. Options: let the overseer
+  decide at the pause (drafting time) instead of at the confirmed turn end. Or
+  **draft all three agents in parallel** and play the overseer's pick, at about
+  2–3× output tokens for the first second of each turn. Parallel generation
+  also makes 1.5's `upstream_error` more likely, so the retry rule matters
+  more.
+- **Varied openers and handoff lines.** Agents copy the prompt's example
+  phrases word for word. Give each persona its own examples.
 - **Stream your audio to the agents while you speak**, in small commits, so
   less is left to process at the end. Time to first audio was ~540 ms after a
   text-only request versus ~770 ms after a 5 s audio turn.
