@@ -1,0 +1,9 @@
+# Never ship credentials, mutable OpenClaw state, or auth files to the Docker daemon.
+.local
+.local/**
+.env
+.env.*
+**/*.log
+**/__pycache__
+**/*.pyc
+tests/
