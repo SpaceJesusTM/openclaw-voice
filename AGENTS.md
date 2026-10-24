@@ -48,6 +48,9 @@ from the baseline as described in `docs/ROADMAP_ACCEPTANCE_DEMO.md`.
 - Keep the two Pipecat compatibility fixes and the exact preview model checks.
 - Workspace skill/helper changes reach the demo only through
   `manage.py update-workspace` (known-version upgrade with backups).
+- Web UI changes (`apps/web/`) follow `docs/design-language.md`: one window with no
+  page scroll, clay only for the agent, serif for the agent's voice, and only real
+  data on screen.
 
 When user input or account approval is required (for example WebSocket device
 pairing), stop at a documented checkpoint. Tests without real provider access are
