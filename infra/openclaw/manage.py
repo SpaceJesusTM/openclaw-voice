@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Owner-side manager for the isolated ClawVoice OpenClaw demo runtime.
 
-Never reads ~/.openclaw, ~/.config/gogcli, production Tari, or any other checkout.
-Run: python3 infra/openclaw/manage.py init|install-planner|planner|start|stop|status|logs|doctor|openclaw|gog|google|chat
+Never reads ~/.openclaw, production Tari, or any other checkout.
+Run: python3 infra/openclaw/manage.py init|install-planner|planner|start|stop|status|logs|doctor|openclaw|chat
 """
 from __future__ import annotations
 
@@ -80,9 +80,8 @@ def load_env() -> dict[str, str]:
     port = int(data.get("CLAWVOICE_OPENCLAW_PORT", DEFAULT_PORT))
     if port < 1024 or port > 65535:
         raise RuntimeError("Invalid local Gateway port")
-    for key in ("OPENCLAW_GATEWAY_TOKEN", "GOG_KEYRING_PASSWORD"):
-        if not re.fullmatch(r"[a-f0-9]{64}", data.get(key, "")):
-            raise RuntimeError("Missing or invalid generated private credential")
+    if not re.fullmatch(r"[a-f0-9]{64}", data.get("OPENCLAW_GATEWAY_TOKEN", "")):
+        raise RuntimeError("Missing or invalid generated private credential")
     return data
 
 
@@ -97,7 +96,7 @@ def initialize(timezone: str, name: str, port: int) -> None:
         raise RuntimeError("Name must use simple characters")
     if not (1024 <= port <= 65535):
         raise RuntimeError("Port must be 1024-65535")
-    for rel in ("", "state", "state/workspace", "google"):
+    for rel in ("", "state", "state/workspace"):
         private_dir(LOCAL / rel)
     values = {
         "COMPOSE_PROJECT_NAME": "clawvoice-" + secrets.token_hex(6),
@@ -107,10 +106,8 @@ def initialize(timezone: str, name: str, port: int) -> None:
         "CLAWVOICE_NAME": name,
         "CLAWVOICE_TIMEZONE": timezone,
         "CLAWVOICE_MODEL": DEFAULT_MODEL,
-        "TARI_TIMEZONE": timezone,              # compatibility with tari-google
-        "TARI_GOOGLE_ACCOUNT": "",               # set your different demo Google account
+        "TARI_TIMEZONE": timezone,              # read by bin/day-planner
         "OPENCLAW_GATEWAY_TOKEN": secrets.token_hex(32),
-        "GOG_KEYRING_PASSWORD": secrets.token_hex(32),
     }
     env_text = "# Private ClawVoice demo runtime. Never commit or share.\n"
     env_text += "".join(f"{key}={value}\n" for key, value in values.items())
@@ -143,7 +140,7 @@ def initialize(timezone: str, name: str, port: int) -> None:
             write_if_absent(target, text, 0o700 if source.parent.name == "bin" else 0o600)
             count += not existed
     print(f"Initialized isolated ClawVoice state; seeded {count} workspace files.")
-    print("Next: configure ChatGPT OAuth and a separate Google account (see README).")
+    print("Next: configure ChatGPT OAuth (see README).")
     print("Existing private files are preserved; repeat init will not overwrite them.")
 
 
@@ -288,8 +285,8 @@ def main() -> int:
     init.add_argument("--timezone", default="America/Toronto")
     init.add_argument("--name", default="Tari")
     init.add_argument("--port", type=int, default=DEFAULT_PORT)
-    for action in ("install-planner", "planner", "start", "stop", "status", "logs", "doctor", "openclaw", "gog", "google"):
-        sub.add_parser(action, add_help=action not in ("planner", "openclaw", "gog", "google"))
+    for action in ("install-planner", "planner", "start", "stop", "status", "logs", "doctor", "openclaw"):
+        sub.add_parser(action, add_help=action not in ("planner", "openclaw"))
     speak = sub.add_parser("chat")
     speak.add_argument("prompt")
     speak.add_argument("--conversation", default="clawvoice-demo")
@@ -322,10 +319,8 @@ def main() -> int:
             raise RuntimeError("Docker CLI is missing")
         print("Isolated project:", data["COMPOSE_PROJECT_NAME"])
         print("Local Gateway port:", data["CLAWVOICE_OPENCLAW_PORT"])
-        print("Google account configured:", bool(data.get("TARI_GOOGLE_ACCOUNT")))
         for command in (("config", "--quiet"),
-                        ("exec", "-T", "openclaw", "node", "/app/openclaw.mjs", "config", "validate", "--json"),
-                        ("exec", "-T", "openclaw", "gog", "--version")):
+                        ("exec", "-T", "openclaw", "node", "/app/openclaw.mjs", "config", "validate", "--json")):
             status = run_compose(*command)
             if status:
                 return status
@@ -335,14 +330,6 @@ def main() -> int:
         if not rest:
             parser.error("Pass OpenClaw CLI arguments")
         return run_compose("exec", "openclaw", "node", "/app/openclaw.mjs", *rest)
-    if args.action == "gog":
-        if not rest:
-            parser.error("Pass gog CLI arguments")
-        return run_compose("exec", "openclaw", "gog", *rest)
-    if args.action == "google":
-        if not rest:
-            parser.error("Pass calendar/gmail helper arguments")
-        return run_compose("exec", "-T", "openclaw", "./bin/tari-google", *rest)
     if args.action == "chat":
         if rest:
             parser.error("Unexpected arguments")

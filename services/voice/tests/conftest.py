@@ -55,9 +55,42 @@ def astra_config(port: int, transport: str = "ws", **timeouts) -> AgentConfig:
     return agent_from(data)
 
 
-def tari_fixture_config(port: int = 9, transport: str = "http") -> AgentConfig:
-    """Tari's real configuration, with helpers and Gateway swapped for fixtures."""
+# Tari's live config is local-only, but the day_planner plugin still supports a
+# Calendar. These restore the Calendar topics so its resolvers and verifier stay covered.
+CALENDAR_TOPICS = [
+    {"key": "calendar.today", "description": "today's Calendar events only",
+     "resolver": "calendar_day", "args": {"day": "today"}},
+    {"key": "calendar.next", "description": "the next upcoming Calendar event or meeting",
+     "resolver": "calendar_next", "args": {"horizon_days": 3}},
+]
+CALENDAR_RECEIPT = {
+    "verifier": "calendar_event",
+    "args": {"helper": "google"},
+    "invalidates": ["calendar.today", "calendar.next", "planner.today", "planner.tomorrow"],
+    "format": '{"type":"calendar_event","action":"created|updated|deleted",'
+    '"calendar_id":"<calendar id, e.g. primary>","event_id":"<event id>"}',
+}
+
+
+def with_calendar(data: dict) -> dict:
+    for topic in data["hot_context"]["topics"]:
+        if topic["resolver"] == "local_planner_day":
+            topic["resolver"] = "planner_day"
+    data["hot_context"]["topics"][2:2] = copy.deepcopy(CALENDAR_TOPICS)
+    data["delegation"]["targets"].insert(0, "calendar")
+    data["delegation"]["receipt_types"] = {"calendar_event": dict(CALENDAR_RECEIPT),
+                                           **data["delegation"]["receipt_types"]}
+    return data
+
+
+def tari_fixture_config(port: int = 9, transport: str = "http", calendar: bool = False) -> AgentConfig:
+    """Tari's real configuration, with helpers and Gateway swapped for fixtures.
+
+    ``calendar=True`` adds the Calendar topics and receipt type back (see ``with_calendar``).
+    """
     data = copy.deepcopy(load_yaml("tari"))
+    if calendar:
+        with_calendar(data)
     data["openclaw"]["gateway"].update(
         ws_url=f"ws://127.0.0.1:{port}",
         http_url=f"http://127.0.0.1:{port}",
@@ -76,6 +109,7 @@ def tari_fixture_config(port: int = 9, transport: str = "http") -> AgentConfig:
 def components():
     registry = default_registry()
     registry.load_plugin("day_planner")
+    registry.load_plugin("local_planner")
     return registry
 
 

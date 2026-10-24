@@ -8,8 +8,9 @@ OpenClaw agents. Voice is powered by **Boson Higgs Realtime 1.5 Preview**
 
 - [x] Direct Higgs 1.5 realtime test — `experiments/higgs-realtime-1.5/`
 - [x] Pipecat + Higgs 1.5 experiment — `experiments/pipecat-higgs-1.5/`
-- [x] Standalone Tari with ChatGPT OAuth, Gmail reads and full Calendar management
-- [x] Persistent Calendar-aware day planner, commute blocks and categorized checklist
+- [x] Standalone Tari with ChatGPT OAuth
+- [x] Persistent local day planner, commute blocks and categorized checklist
+- [x] Google (Calendar/Gmail) removed: Tari is planner-only
 - [x] **Priority 1:** talk to the real Tari through Higgs + Pipecat, with a generic
       OpenClaw agent adapter, per-agent hot-context cache, nonblocking verified
       jobs and spoken completions — `services/voice/`, `apps/web/`
@@ -25,8 +26,8 @@ make setup                               # first time only
 make dev                                 # open http://127.0.0.1:7860 and click Connect
 ```
 
-Ask "What's on my planner today?" (instant, from cached real data), "Create a
-Calendar event tomorrow from 3 to 4 PM called Project Meeting" (done by the
+Ask "What's on my planner today?" (instant, from cached real data), "Add a
+planner block tomorrow at 2 PM for an hour called Deep work" (done by the
 OpenClaw agent, independently verified, announced when finished), and keep
 talking while it works. Guide: **[docs/voice.md](docs/voice.md)** · Evidence:
 [docs/voice-validation.md](docs/voice-validation.md).
@@ -38,13 +39,12 @@ python3 infra/openclaw/manage.py init --timezone America/Toronto
 python3 infra/openclaw/manage.py start
 ```
 
-Then follow **[OpenClaw + Google owner setup](docs/openclaw-setup.md)** for
-ChatGPT-based GPT-6.1 Sol authentication and a separate Google account's
-Gmail read-only consent and full Calendar authorization. See the [foundation audit](docs/openclaw-audit.md)
+Then follow **[OpenClaw owner setup](docs/openclaw-setup.md)** for
+ChatGPT-based GPT-6.1 Sol authentication. See the [foundation audit](docs/openclaw-audit.md)
 for runtime evidence and [planner usage](docs/planner.md) for direct and conversational commands.
 
 OpenClaw Gateway is local-only on port **18939** by default. Separate generated
-credentials, OAuth files and agent state stay under ignored
+credentials and agent state stay under ignored
 `infra/openclaw/.local/`. It must never use the production Tari installation.
 
 **[Architecture and milestones](docs/architecture.md)** ·

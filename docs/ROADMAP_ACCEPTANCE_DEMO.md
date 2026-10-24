@@ -1,5 +1,9 @@
 # ClawVoice — Phased roadmap, evidence, and demo storyboard
 
+> **Google removed (2026-10-24, branch `pipecat-tari`):** Tari no longer has Google
+> Calendar or Gmail; its day planner is local-only. Calendar and Gmail content below
+> is earlier roadmap material and does not describe the current setup.
+
 This is the **whole-project roadmap**, not a command to implement every phase during a single Claude Code run. Later explicit assignments govern what to build now. Preserve the final product intent even when deliberately limiting the implementation scope.
 
 ## Phased delivery map

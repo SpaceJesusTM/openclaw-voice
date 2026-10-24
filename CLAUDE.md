@@ -22,6 +22,8 @@ These docs are **durable product and architecture intent**, not permission to im
 
 ## Verified foundation and references (snapshot, re-check before work)
 
+- **Google removed (branch `pipecat-tari`):** Calendar and Gmail, `tari-google`, the Google skills, `gog` and its OAuth setup were removed. The day planner is local-only (`TARI_CALENDAR` unset); its ported Calendar path is dormant. The Google facts below are history.
+
 - Repository: https://github.com/SpaceJesusTM/openclaw-voice; reference Tari: https://github.com/SpaceJesusTM/tari-public.
 - Foundation branch: `feat/openclaw-google-foundation`; planner integration verified at commit `e77e9c42a5e44e1c0810986452da6dcd81a997d8`. Priority 1 implementation branch: `feat/voice-single-agent-adapter`, created from that commit. Confirm actual local/remote HEAD before modifying code.
 - OpenClaw isolated demo in `infra/openclaw/`, local Gateway `127.0.0.1:18939` by default, with `openclaw/tari` agent selection and backend-only bearer auth. The underlying agent model is configured independently; Tari was verified using `openai/gpt-6.1-sol` with ChatGPT subscription OAuth.
@@ -35,7 +37,7 @@ These docs are **durable product and architecture intent**, not permission to im
 
 - Never access, copy or modify **production Tari on the MSI GS66**, its keys, state or mailbox. Mac demo is an independent installation.
 - Never print/commit secrets, provider tokens, redirect/code URLs, raw private mail, or private transcripts. Sensitive state is local/ignored; keep Gateway/Boson credentials on the server.
-- Keep Google/Calendar business logic in the authorized OpenClaw agent; voice invokes and observes it, not a parallel privileged Gmail/Calendar implementation. A spoken request is not automatically a confirmed write; require actual verified backend results.
+- Keep business logic (planner, checklist, any future integrations) in the authorized OpenClaw agent; voice invokes and observes it, not a parallel privileged implementation. A spoken request is not automatically a confirmed write; require actual verified backend results.
 - Preserve existing OpenClaw sessions, OAuth profiles, day-planner Markdown, and working experiments. Do not force-push, reinitialize the agent, re-add obsolete model-policy enforcement, or replace the validated Pipecat stack casually.
 - Model speech interruptions and background-job cancellation independently: an interruption stops spoken playback **without assuming** that an external action was cancelled.
 - The default local single-agent voice test needs no multi-agent collaboration and no new cloud deployment. Do not add LiveKit or a redundant audio framework.

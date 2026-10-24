@@ -12,14 +12,14 @@ agent-to-agent collaboration, and eventual shared human/agent rooms.
 - Preserve completed experiments under `experiments/` as regression references.
 - The `infra/openclaw/` demo is isolated from the production Tari installation.
   Never read, copy, mount, or overwrite production Tari tokens, state or private mail.
-- No secrets, OAuth callback URLs, API keys, Google JSON, mutable state or
+- No secrets, OAuth callback URLs, API keys, credential JSON, mutable state or
   raw sensitive voice transcripts in Git. All belong in ignored `.local/`.
 - Tari's initial default model is `openai/gpt-6.1-sol` with no automatic
   fallbacks in the demo. Models, credentials and tools are configurable through
   OpenClaw's native management; do not impose a platform-wide model or OAuth profile.
   Verify actual inference separately from configured model/auth status.
-- Gmail is read-only. Calendar has full event management via a separate
-  authorized profile. Only perform changes the user requested; verify results.
+- There is no Google integration (no Calendar, no Gmail); do not add one
+  without the owner asking. Only perform changes the user requested; verify results.
 - Reuse Pipecat transport, audio, workers and OpenClaw Gateway primitives
   rather than rebuilding generic framework functionality.
 - Keep names, voices, frontend appearances, routing, and caches configurable.
@@ -30,8 +30,8 @@ Priority 1 is implemented in `services/voice/` and `apps/web/` (see
 `docs/voice.md`, `docs/voice-validation.md`): one real voiced agent (Tari) with
 a generic OpenClaw adapter, per-agent hot-context cache, nonblocking verified
 jobs and spoken completions, on top of the validated foundation (isolated Docker
-OpenClaw, ChatGPT/Codex OAuth, separate Google account, read-only Gmail,
-Calendar management, persistent planner/checklist).
+OpenClaw, ChatGPT/Codex OAuth, persistent planner/checklist). Google was
+removed: Tari is planner-only.
 
 - Agent specifics belong in `services/voice/agents/*.yaml`; the core runtime
   must not branch on agent names (a test enforces this).

@@ -1,5 +1,9 @@
 # ClawVoice — Architecture and reusable contracts
 
+> **Google removed (2026-10-24, branch `pipecat-tari`):** Tari no longer has Google
+> Calendar or Gmail; its day planner is local-only. Calendar and Gmail content below
+> is earlier design intent and does not describe the current setup.
+
 > **Design intent, not an already-implemented API specification.** Claude should inspect actual repo source, Pipecat/Boson compatibility, and OpenClaw Gateway behavior, then choose the simplest coherent implementation. The names, YAML and type shapes below are examples of **semantics**, not requirements to create new microservices.
 
 ## Architectural split

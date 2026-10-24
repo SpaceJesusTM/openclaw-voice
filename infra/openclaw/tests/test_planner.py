@@ -32,7 +32,8 @@ class PlannerTests(unittest.TestCase):
         # Never use host /tmp, a real workspace, or a user's Google credentials.
         self.temp = tempfile.TemporaryDirectory(prefix=".planner-test-", dir=REPO / "tests")
         self.addCleanup(self.temp.cleanup)
-        self.env = patch.dict(os.environ, {"TARI_GOOGLE_ACCOUNT": "alex@example.net",
+        # These tests cover the dormant ported Calendar path; LocalOnlyPlannerTests covers the default.
+        self.env = patch.dict(os.environ, {"TARI_CALENDAR": "google", "TARI_GOOGLE_ACCOUNT": "alex@example.net",
                                           "TARI_PLANNER_NOW": "2026-10-20T09:02:00+00:00"}, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -330,7 +331,7 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(str(planner.parse_day("tomorrow")), "2026-10-20")
 
     def test_missing_google_account_fails_before_process(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"TARI_CALENDAR": "google"}, clear=True):
             self.assertEqual(self.run_cli("add", "2026-10-21", "13:00-14:00", "Draft")[0], 3)
         self.mock_run.assert_not_called()
 
@@ -458,6 +459,58 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual(list(path.parent.glob(".planner-*")), [])
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+
+class LocalOnlyPlannerTests(unittest.TestCase):
+    """The default: no TARI_CALENDAR, so no Calendar read is ever attempted."""
+
+    run_cli = PlannerTests.run_cli
+    day_path = PlannerTests.day_path
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix=".planner-test-", dir=REPO / "tests")
+        self.addCleanup(self.temp.cleanup)
+        self.env = patch.dict(os.environ, {"TARI_PLANNER_NOW": "2026-10-20T09:02:00+00:00"}, clear=True)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.settings = patch.multiple(planner, ROOT=self.temp.name, WORKSPACE=Path(self.temp.name).parent, TZ_NAME="UTC")
+        self.settings.start()
+        self.addCleanup(self.settings.stop)
+        self.no_calendar = patch.object(planner.subprocess, "run", side_effect=AssertionError("Calendar was read"))
+        self.no_calendar.start()
+        self.addCleanup(self.no_calendar.stop)
+
+    def test_show_is_complete_local_view_without_calendar_warnings(self):
+        self.assertEqual(self.run_cli("add", "tomorrow", "13:00-14:00", "Deep work")[0], 0)
+        code, out, _ = self.run_cli("show", "tomorrow", "--json")
+        self.assertEqual(code, 0)
+        value = json.loads(out)
+        self.assertEqual(value["scope"], "local")
+        self.assertIs(value["calendar_complete"], False)
+        self.assertTrue(value["complete"])
+        self.assertEqual(value["warnings"], [])
+        self.assertEqual(value["warning_details"], [])
+        self.assertEqual([item["title"] for item in value["schedule"]], ["Deep work"])
+
+    def test_writes_need_no_calendar_flag_and_still_check_local_overlap(self):
+        self.assertEqual(self.run_cli("add", "tomorrow", "13:00-14:00", "Deep work")[0], 0)
+        code, _, error = self.run_cli("add", "tomorrow", "13:30-14:30", "Review")
+        self.assertEqual(code, 4)
+        self.assertIn("overlaps", error)
+        self.assertEqual(self.run_cli("place", "tomorrow", "1h", "Review")[0], 0)
+        self.assertIn("Review", self.day_path().read_text())
+
+    def test_free_time_is_not_marked_unverified(self):
+        code, out, _ = self.run_cli("free", "tomorrow")
+        self.assertEqual(code, 0)
+        self.assertIn("Free time", out)
+        self.assertNotIn("Unverified", out)
+        self.assertNotIn("⚠️", out)
+
+    def test_excluded_explains_local_only_mode(self):
+        code, out, _ = self.run_cli("excluded", "tomorrow")
+        self.assertEqual(code, 0)
+        self.assertIn("local-only", out)
 
 
 if __name__ == "__main__":

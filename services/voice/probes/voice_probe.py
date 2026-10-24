@@ -1,7 +1,10 @@
 """Live ClawVoice acceptance probe over WebRTC + RTVI, the same path a browser uses.
 
-    .venv/bin/python probes/voice_probe.py --live --scenario all        # a-e, g, h
-    .venv/bin/python probes/voice_probe.py --live --scenario c,g        # any subset
+    .venv/bin/python probes/voice_probe.py --live --scenario all        # a, b, d, e, h
+    .venv/bin/python probes/voice_probe.py --live --scenario b,h        # any subset
+
+Scenarios c and g exercise Google Calendar, which this demo no longer has; they
+are kept for a Calendar-enabled agent and are not part of ``all``.
 
 Requires ``make dev`` running, the Boson key, and the isolated demo OpenClaw.
 Speech input uses synthetic WAV files generated with macOS ``say`` (not a
@@ -749,13 +752,13 @@ async def main(url: str, names: list[str], timeout: float, fixture_url: str) -> 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--live", action="store_true", help="Explicitly allow live Boson/OpenClaw/Google calls")
+    parser.add_argument("--live", action="store_true", help="Explicitly allow live Boson/OpenClaw calls")
     parser.add_argument("--url", default="http://127.0.0.1:7860")
     parser.add_argument("--fixture-url", default="http://127.0.0.1:7861", help="Server running the fixture agent (f)")
-    parser.add_argument("--scenario", default="all", help="a-h, comma separated, or all (= a-e, g, h; f needs the fixture servers)")
+    parser.add_argument("--scenario", default="all", help="a-h, comma separated, or all (= a, b, d, e, h; c and g need a Calendar; f needs the fixture servers)")
     parser.add_argument("--timeout", type=float, default=90)
     args = parser.parse_args()
     if not args.live:
         parser.error("Pass --live to run live tests; --help makes no connection")
-    chosen = list("abcdegh") if args.scenario == "all" else [s.strip() for s in args.scenario.split(",")]
+    chosen = list("abdeh") if args.scenario == "all" else [s.strip() for s in args.scenario.split(",")]
     raise SystemExit(asyncio.run(main(args.url.rstrip("/"), chosen, args.timeout, args.fixture_url.rstrip("/"))))

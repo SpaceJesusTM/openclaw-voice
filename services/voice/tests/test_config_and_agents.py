@@ -54,9 +54,11 @@ def test_tari_configuration_is_loaded_from_files_not_code():
     assert tari.session_key == "agent:tari:clawvoice-local-owner"
     assert tari.gateway.token_ref.startswith("envfile:")
     assert [t.key for t in tari.topics] == [
-        "planner.today", "planner.tomorrow", "calendar.today", "calendar.next", "checklist.focus", "jobs.recent"
+        "planner.today", "planner.tomorrow", "checklist.focus", "jobs.recent"
     ]
-    assert set(tari.receipt_types) == {"calendar_event", "planner_block", "checklist_task"}
+    assert set(tari.receipt_types) == {"planner_block", "checklist_task"}
+    assert tari.plugins == ("day_planner", "local_planner")
+    assert set(tari.helpers) == {"planner"}  # local-only: no Google helper
 
 
 def test_fixtures_load_only_when_enabled():
@@ -82,7 +84,7 @@ def test_public_identity_exposes_no_endpoints_or_secret_references():
         (lambda d: d["openclaw"]["gateway"].update(transport="carrier-pigeon"), "transport"),
         (lambda d: d.update(timezone="Mars/Olympus"), "timezone"),
         (lambda d: d["hot_context"]["topics"].append(dict(d["hot_context"]["topics"][0])), "duplicate"),
-        (lambda d: d["delegation"]["receipt_types"]["calendar_event"].update(invalidates=["nope"]), "unknown topics"),
+        (lambda d: d["delegation"]["receipt_types"]["planner_block"].update(invalidates=["nope"]), "unknown topics"),
         (lambda d: d.update(id="Bad ID"), "id must match"),
     ],
 )

@@ -1,5 +1,9 @@
 # ClawVoice — Complete product vision
 
+> **Google removed (2026-10-24, branch `pipecat-tari`):** Tari no longer has Google
+> Calendar or Gmail; its day planner is local-only. Calendar and Gmail content below
+> is earlier product intent and does not describe the current setup.
+
 **Tagline:** **Your AI team, in the room.**  
 **Hackathon context:** Boson AI × Higgs Realtime, October 23–24, 2026  
 **Purpose of this document:** preserve the desired **eventual product**, not merely the next Claude implementation prompt.

@@ -12,15 +12,13 @@ not authorize changes. Words such as “urgent”, “schedule”, or “tomorro
 not select the planner. Ask when the intended target is unclear.
 
 Run `./bin/day-planner` for the full command reference. Use this helper for every
-planner read and mutation. Never edit planner Markdown by hand, reconstruct a
-planner from memory, or substitute a Calendar summary when the helper fails.
+planner read and mutation. Never edit planner Markdown by hand or reconstruct a
+planner from memory when the helper fails.
 
-The view has three separate kinds of entries:
+This demo planner is local-only: it reads no calendar. The view has two kinds of
+entries:
 
-- Calendar entries come from the user's primary calendar and accepted shared
-  invitations, read live through `tari-google`. They provide schedule context;
-  they do not establish deadlines or prove that work is complete.
-- Planner blocks are local time blocks that never create Calendar events.
+- Planner blocks are local time blocks.
 - Commute blocks are local travel time that occupies time like a Planner block.
 
 The categorized checklist persists across dates. Each task has a completion flag
@@ -57,42 +55,21 @@ public checklist is empty; sections belong to the user.
 Resolve natural language to explicit dates and unambiguous times using
 `TARI_TIMEZONE`. A bare `1` is refused; use `13:00` or `1pm`. Resolve a reference
 with the id from `show --json` or `checklist --json` when several titles match.
-Blocks stay within one day. A commute `to` an event ends at its start; a commute
-`home` begins at its end. Use `--keep-end` when resizing an outbound commute.
+Blocks stay within one day. A commute `to` a planner block ends at its start; a
+commute `home` begins at its end. Use `--keep-end` when resizing an outbound commute.
 
 `task-add` fails when a section does not exist. Pass `--create` only if the user
 clearly intends to create that section. Never turn a suggested schedule into
 saved blocks or suggested priorities into checklist changes without authorization.
 
-## Calendar checks and overlap confirmation
+## Overlap confirmation
 
-The helper reads Calendar commitments before adding, placing, moving, resizing,
-or creating commute blocks. It has no Calendar write command. Requests to create
-or modify a Calendar event belong to the existing native Calendar management
-skill. This planner adds no Calendar permission or proposal-token machinery.
-
-An overlap returns exit 4 and writes nothing. Explain the specific conflicting
-items and obtain the user's confirmation before repeating with
-`--allow-overlap`. Never pass that flag preemptively. A confirmation covers that
-specific overlap, not unrelated future conflicts.
-
-An unavailable or incomplete Calendar returns exit 3 for a mutation and writes
-nothing. Tell the user the check failed. Use `--no-calendar` only after the user
-explicitly agrees to proceed without checking Calendar. Read-only views can show
-local blocks with a visible Calendar warning; never describe the resulting free
-slots as verified availability.
-
-The user's own events count unless the user declined. Shared events count only
-when the user's attendee response is accepted. Tentative, unanswered, or unknown
-shared invitations and other shared-calendar events remain context and do not
-block time unless the user explicitly includes one with `--count`. All-day
-events are shown but do not block time. Transparent events are shown without
-blocking time.
-
-Only when the user asks about a missing event or explicitly says a shared event
-involves them, run `./bin/day-planner excluded DAY`. This is diagnostic output;
-do not relay unrelated people's event titles or calendar identities. Use
-`--count EVENT_ID` on subsequent commands to include that specific event.
+Adding, placing, moving, resizing, or creating commute blocks checks for overlaps
+with existing local blocks. An overlap returns exit 4 and writes nothing. Explain
+the specific conflicting items and obtain the user's confirmation before
+repeating with `--allow-overlap`. Never pass that flag preemptively. A
+confirmation covers that specific overlap, not unrelated future conflicts.
+Calendar flags (`--count`, `--no-calendar`) and `excluded` do nothing here.
 
 ## Responses and state
 
@@ -101,16 +78,13 @@ short confirmation; show the full view when asked. If it fails, report the failu
 without inventing a replacement view. Translate backend errors into a short,
 useful explanation; do not paste raw stderr or identifiers into normal replies.
 
-State is local Markdown under `planner/`. It contains no Calendar cache. Planner
-blocks are plans, not externally confirmed commitments, and do not automatically
+State is local Markdown under `planner/`. Planner blocks are plans, not externally confirmed commitments, and do not automatically
 create reminders or scheduled jobs. The optional `TARI_PLANNER_DIR` override is
 for a separately isolated local state directory, including tests.
 
 In ClawVoice, this directory must remain inside the active demo workspace;
 symlink escapes are refused. The default planning zone is America/Toronto.
-Day boundaries and Calendar instants use IANA conversion, including 23/25-hour
-days. Local Markdown blocks cannot distinguish two occurrences of a repeated
-clock hour: refuse ambiguous/nonexistent local ranges, clarify with the user,
-and choose an unambiguous range. Free/place excludes that clock-change interval.
-Calendar events retain exact offset-bearing times; a fold-spanning event may
-occupy the repeated hour conservatively for local availability.
+Day boundaries use IANA conversion, including 23/25-hour days. Local Markdown
+blocks cannot distinguish two occurrences of a repeated clock hour: refuse
+ambiguous/nonexistent local ranges, clarify with the user, and choose an
+unambiguous range. Free/place excludes that clock-change interval.

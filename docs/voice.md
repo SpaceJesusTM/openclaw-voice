@@ -7,12 +7,16 @@ Tari is the first configured agent; nothing in the runtime is specific to Tari.
 Three behaviors define Priority 1:
 
 1. **Fast cached context.** "What's on my planner today?" is answered from a
-   per-agent hot-context cache of real planner/Calendar data (sub-millisecond
+   per-agent hot-context cache of real planner data (sub-millisecond
    reads) without waiting for an OpenClaw model run.
-2. **Real agent actions.** "Create a Calendar event tomorrow from 3 to 4 PM called
-   Project Meeting" is handed to the OpenClaw agent, which uses its own Calendar
-   skill. ClawVoice then reads the event back independently and only says it is
+2. **Real agent actions.** "Add a planner block tomorrow at 2 PM for an hour
+   called Deep work" is handed to the OpenClaw agent, which uses its own planner
+   skill. ClawVoice then reads the block back independently and only says it is
    done when the read-back matches.
+
+Tari has **no Google integration** (no Calendar, no Gmail): its planner is
+local-only. The `day_planner` plugin still supports a Calendar-aware planner for
+other agents; Tari uses `local_planner` for its planner views.
 3. **Nonblocking conversation.** You keep talking while the agent works. The
    result is announced when nobody is speaking. Interrupting speech never
    cancels the work.
@@ -100,11 +104,8 @@ working (spinning ring) and an update waiting to speak (amber dot).
 
 Things to try:
 
-- "What's on my planner today?" / "What do I have tomorrow?" / "What's on my
-  Calendar today?" / "What's my next meeting?" / "What are my priority
-  checklist tasks?" — cached answers.
-- "Create a Calendar event tomorrow from 3 to 4 PM called Project Meeting." —
-  real Calendar write, verified, announced.
+- "What's on my planner today?" / "What do I have tomorrow?" / "What are my
+  priority checklist tasks?" — cached answers.
 - "Add a planner block tomorrow at 2 PM for an hour called Deep work." / "Mark
   Review prototype as in progress." — local planner/checklist changes.
 - While a task runs: "Also, what's on tomorrow's planner?" — answered at once.
@@ -139,6 +140,7 @@ Browser (apps/web)  --WebRTC audio + RTVI data-->  Pipecat SmallWebRTC transport
 | `clawvoice/context/` | Generic hot-context cache and built-in resolvers |
 | `clawvoice/jobs/` | Job model, persistent store, verifier contract, job manager |
 | `clawvoice/plugins/day_planner.py` | Resolvers/verifiers over the planner and Calendar helper JSON |
+| `clawvoice/plugins/local_planner.py` | Planner-only views for a local-only planner (Tari) |
 | `clawvoice/runtime.py`, `server.py` | Process wiring, local API, lifespan |
 | `services/voice/agents/*.yaml` | Agent configurations (Tari live, Astra fixture) |
 | `apps/web/` | Local UI (no build step, no external scripts) |
@@ -174,19 +176,18 @@ openclaw:
     transport: auto                # auto | ws | http
   session: {key_template: "agent:{agent_id}:clawvoice-{owner_scope}"}
   timeouts: {question_seconds: 180, change_seconds: 300}
-plugins: [day_planner]
+plugins: [day_planner, local_planner]
 helpers:                           # trusted deterministic read helpers (argv, no shell)
   planner: ["{python}", "{repo}/infra/openclaw/manage.py", "planner"]
-  google: ["{python}", "{repo}/infra/openclaw/manage.py", "google"]
 hot_context: {defaults: {...}, topics: [...]}
 delegation:
-  targets: [calendar, planner, checklist, other]
-  clarify: "whether it is a Calendar event, a planner block or a checklist task, ..."
+  targets: [planner, checklist, other]
+  clarify: "whether it is a local planner block or a checklist task, ..."
   receipt_types:
-    calendar_event:
-      verifier: calendar_event
-      invalidates: [calendar.today, calendar.next, planner.today, planner.tomorrow]
-      format: '{"type":"calendar_event","action":"created|updated|deleted",...}'
+    planner_block:
+      verifier: planner_block
+      invalidates: [planner.today, planner.tomorrow]
+      format: '{"type":"planner_block","action":"added|moved|resized|renamed|removed",...}'
 ```
 
 Secrets are references (`env:NAME` or `envfile:PATH#NAME` inside the repo),
@@ -245,9 +246,8 @@ receipt types are invalidated and re-read from the source; an invalidation that
 arrives while a refresh is running forces another read, so answers after a write
 reflect it (read-your-writes). Cached data never authorizes an action.
 
-Tari's topics come from `day-planner show DAY --json`, `checklist --json`
-and the planner's own Calendar merge (its inclusion and completeness rules stay
-authoritative); `jobs.recent` comes from the job store. Gmail is never cached.
+Tari's topics come from `day-planner show DAY --json` (local-only: no Calendar)
+and `checklist --json`; `jobs.recent` comes from the job store.
 
 ### Add a hot-context topic
 
@@ -339,9 +339,8 @@ with a speaking-agent field and a cross-agent floor queue.
 - Helpers run without a shell, with a minimal environment that excludes all
   credentials, and with output, time and concurrency limits. Receipt IDs passed
   to helpers must be plain identifiers.
-- Calendar titles, planner text and agent output are treated as data; the voice
+- Planner text and agent output are treated as data; the voice
   instructions say so, and tool results are bounded and whitespace-normalized.
-- Gmail stays read-only and is never cached or spoken by ClawVoice.
 - Private traces, probe reports, job records and the device key live only in
   ignored `services/voice/captures/` and `services/voice/.local/`.
 
@@ -351,13 +350,13 @@ with a speaking-agent field and a cross-agent floor queue.
    `higgs-realtime-1.5-preview · verified` after Connect.
 2. "Hey Tari, what's on my planner today?" — the diagnostics drawer shows
    `get_context … cache hit`, read time in microseconds.
-3. "Create a Calendar event tomorrow from 3 to 4 PM called Demo Sync." — Tari
+3. "Add a planner block tomorrow from 3 to 4 PM called Demo Sync." — Tari
    says "On it."; a task appears as running.
-4. While it runs: "Also, what's on tomorrow's planner?" — answered immediately.
-5. A few seconds later Tari announces the verified event; the task shows
-   `completed · ✓ verified`, and the planner/Calendar topics refresh.
-6. "Move Demo Sync to 4 PM." then "Did that finish?"; finally "Delete the Demo
-   Sync event." (only events you created for the demo).
+4. While it runs: "Also, what are my priority checklist tasks?" — answered immediately.
+5. A few seconds later Tari announces the verified block; the task shows
+   `completed · ✓ verified`, and the planner topics refresh.
+6. "Move Demo Sync to 4 PM." then "Did that finish?"; finally "Remove the Demo
+   Sync block."
 7. Barge in while Tari is speaking; the task list shows nothing was cancelled.
 
 ## Tests
@@ -366,7 +365,7 @@ with a speaking-agent field and a cross-agent floor queue.
 cd services/voice
 make check                    # offline tests + Ruff + compile; no API calls
 make dev                      # then, in another terminal:
-.venv/bin/python probes/voice_probe.py --live --scenario all    # live a-e, g, h (Boson, OpenClaw, Google)
+.venv/bin/python probes/voice_probe.py --live --scenario all    # live a, b, d, e, h (Boson, OpenClaw)
 node probes/ui_probe.mjs --live                                 # browser path with a virtual microphone
 ```
 

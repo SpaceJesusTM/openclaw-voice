@@ -307,7 +307,7 @@ async def test_tari_calendar_flow_verifies_and_invalidates_calendar_topics(gatew
     write_fixture(fixture_dir, "calendar", {"events": {"primary/evt42": {
         "id": "evt42", "summary": "Project Meeting", "status": "confirmed",
         "start": {"dateTime": "2026-10-24T19:00:00Z"}, "end": {"dateTime": "2026-10-24T20:00:00Z"}}}})
-    runtime = await runtime_for(tari_fixture_config(gateway.port, transport="ws"), fixture_dir)
+    runtime = await runtime_for(tari_fixture_config(gateway.port, transport="ws", calendar=True), fixture_dir)
     try:
         await until(lambda: all(r["state"] == "fresh" for r in runtime.cache.status()))
         job, _ = runtime.jobs.submit(

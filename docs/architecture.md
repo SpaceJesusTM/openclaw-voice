@@ -15,7 +15,7 @@ Priority 1 implementation guide: [voice.md](voice.md).
 | --- | --- | --- |
 | `experiments/higgs-realtime-1.5/` | Direct API regression playground | Step 1 validated, preserved |
 | `experiments/pipecat-higgs-1.5/` | Pipecat speech-to-speech validation | Step 2 validated, preserved |
-| `infra/openclaw/` | Independent OpenClaw Gateway + Gmail (read-only) / Calendar / planner | Validated foundation (Tari) |
+| `infra/openclaw/` | Independent OpenClaw Gateway + local planner (Google removed) | Validated foundation (Tari) |
 | `services/voice/` | ClawVoice runtime: Pipecat/Higgs voice, generic OpenClaw adapter, hot-context cache, background jobs, local API | **Priority 1 implemented** |
 | `apps/web/` | Local browser UI (single agent, orb, tasks, context, diagnostics) | **Priority 1 implemented** |
 | `services/context-cache/`, `services/orchestrator/` | Reserved names; P1 implements these as modules inside `services/voice` | Pointers only |
@@ -39,7 +39,7 @@ Browser --WebRTC/RTVI--> Pipecat transport -> Higgs 1.5 Preview (tools)
 ## Boundaries kept
 
 - The Gateway token and Boson key stay server-side; the UI receives neither.
-- Google/Calendar logic stays in the OpenClaw agent's skills; ClawVoice only
+- Agent business logic (the planner) stays in the OpenClaw agent's skills; ClawVoice only
   invokes the agent and reads results back through the agent's own helpers.
 - Speech interruption and job cancellation are separate controls.
 - Agent names, colors, voices, topics, helpers and verifiers are configuration
@@ -50,6 +50,7 @@ Browser --WebRTC/RTVI--> Pipecat transport -> Higgs 1.5 Preview (tools)
 ## Milestones
 
 1. ~~Foundation: isolated OpenClaw, OAuth, Google reads/writes, planner.~~
+   Google was later removed; Tari is planner-only.
 2. ~~Priority 1: one real voiced agent, generic adapter, per-agent hot context,
    nonblocking verified jobs, spoken completions, local UI.~~
 3. Priority 2a: several independently configured agents with distinct voices,

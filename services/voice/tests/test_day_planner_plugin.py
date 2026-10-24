@@ -44,7 +44,7 @@ PLANNER = {
 @pytest.fixture
 def agent(fixture_dir):
     write_fixture(fixture_dir, "planner", PLANNER)
-    return tari_fixture_config()
+    return tari_fixture_config(calendar=True)
 
 
 def ctx(agent, clock=NOON):

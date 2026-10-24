@@ -1,5 +1,9 @@
 # ClawVoice Priority 1 — validation results (2026-10-24, America/Toronto)
 
+> **Google removed (2026-10-24, branch `pipecat-tari`):** Tari no longer has Google
+> Calendar or Gmail; its day planner is local-only. Calendar and Gmail content below
+> is a historical record (live probe scenarios c and g need a Calendar) and does not describe the current setup.
+
 Environment: macOS arm64 (Mac demo installation), Python 3.11.6, pipecat-ai
 1.12.0, pipecat-boson 0.1.4 (same locked graph as the experiment), OpenClaw
 2026.9.9 demo container (`infra/openclaw`), Tari on `openai/gpt-6.1-sol` via

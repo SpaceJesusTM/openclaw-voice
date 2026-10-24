@@ -22,6 +22,7 @@ Full guide: [docs/voice.md](../../docs/voice.md) · Results:
 | `clawvoice/context/` | Generic hot-context cache and built-in resolvers |
 | `clawvoice/jobs/` | Background jobs: model, persistent store, verifiers, manager |
 | `clawvoice/plugins/day_planner.py` | Planner/Calendar resolvers and verifiers over the agent's helper JSON |
+| `clawvoice/plugins/local_planner.py` | Planner-only views for a local-only planner (used by Tari) |
 | `clawvoice/testing/` | Fake Gateway and fixture helpers for tests and the portability demo |
 | `probes/` | Live acceptance probes (WebRTC/RTVI and browser) |
 | `tests/` | Offline tests |

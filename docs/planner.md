@@ -1,5 +1,11 @@
 # Tari day planner in ClawVoice
 
+> **Local-only by default.** This demo has no Google integration, so the planner
+> reads no Calendar: `show --json` reports `scope: "local"` and no Calendar warnings,
+> and checked writes need no `--no-calendar`. The Calendar behaviour described below
+> is the ported path, which runs only with `TARI_CALENDAR=google` plus a `tari-google`
+> helper; neither is present in this repository.
+
 The deterministic Tari Public planner is ported from commit
 `c43455a43f59a554fd6e9e96934741ac4397a27d`. It retains daily blocks, commutes,
 free-time placement and a separate categorized checklist. It runs on demand;
@@ -20,7 +26,7 @@ The targeted installer preflights four workspace files, installs missing planner
 code/skill and appends only planner sections to existing AGENTS.md and TOOLS.md.
 It backs up changed existing files under ignored `.local/backups/`, writes
 atomically, and refuses differing existing planner code/instructions for manual
-review. It never replaces the configuration, credentials, sessions, Google helper
+review. It never replaces the configuration, credentials, sessions, helpers
 or saved plans. Repeating the installation is a no-op. No runtime image rebuild
 is needed because the workspace is a persistent bind mount.
 
@@ -179,7 +185,7 @@ Run the offline suite from repository root:
 
 ```sh
 python3 -m unittest discover -s infra/openclaw/tests -v
-python3 -m py_compile infra/openclaw/manage.py infra/openclaw/workspace/bin/tari-google infra/openclaw/workspace/bin/day-planner
+python3 -m py_compile infra/openclaw/manage.py infra/openclaw/workspace/bin/day-planner
 python3 infra/openclaw/manage.py doctor
 ```
 

@@ -26,13 +26,14 @@ openclaw:
     question_seconds: 180
     change_seconds: 300
 
-plugins: [day_planner]
+# day_planner supplies the checklist resolver and verifiers; local_planner the
+# planner views (the demo planner is local-only: no Calendar).
+plugins: [day_planner, local_planner]
 
-# Trusted, deterministic OpenClaw-side read helpers (no model run). They exec
-# the agent's own bin/day-planner and bin/tari-google inside the demo container.
+# Trusted, deterministic OpenClaw-side read helper (no model run). It execs the
+# agent's own bin/day-planner inside the demo container.
 helpers:
   planner: ["{python}", "{repo}/infra/openclaw/manage.py", "planner"]
-  google: ["{python}", "{repo}/infra/openclaw/manage.py", "google"]
 
 hot_context:
   defaults:
@@ -42,21 +43,13 @@ hot_context:
     read_wait_seconds: 3          # how long a voice read waits for a needed refresh
   topics:
     - key: planner.today
-      description: "today's day planner: Calendar events, planner blocks, commutes and a checklist summary"
-      resolver: planner_day
+      description: "today's day planner: planner blocks, commutes and a checklist summary"
+      resolver: local_planner_day
       args: {day: today}
     - key: planner.tomorrow
-      description: "tomorrow's day planner (Calendar events, planner blocks, commutes)"
-      resolver: planner_day
+      description: "tomorrow's day planner (planner blocks and commutes)"
+      resolver: local_planner_day
       args: {day: tomorrow}
-    - key: calendar.today
-      description: "today's Google Calendar events only"
-      resolver: calendar_day
-      args: {day: today}
-    - key: calendar.next
-      description: "the next upcoming Calendar event or meeting"
-      resolver: calendar_next
-      args: {horizon_days: 3}
     - key: checklist.focus
       description: "checklist priority and in-progress tasks"
       resolver: checklist_focus
@@ -71,16 +64,11 @@ hot_context:
       read_wait_seconds: 1
 
 delegation:
-  targets: [calendar, planner, checklist, other]
+  targets: [planner, checklist, other]
   clarify: >-
-    whether it is a Google Calendar event, a local planner block or a checklist
-    task, and the date, start and end time and title where they apply
+    whether it is a local planner block or a checklist task, and the date,
+    start and end time and title where they apply
   receipt_types:
-    calendar_event:
-      verifier: calendar_event
-      args: {helper: google}
-      invalidates: [calendar.today, calendar.next, planner.today, planner.tomorrow]
-      format: '{"type":"calendar_event","action":"created|updated|deleted","calendar_id":"<calendar id, e.g. primary>","event_id":"<event id>"}'
     planner_block:
       verifier: planner_block
       args: {helper: planner}

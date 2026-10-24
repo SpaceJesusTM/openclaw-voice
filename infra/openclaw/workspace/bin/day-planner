@@ -3,8 +3,9 @@
 
 Planner and commute blocks live in planner/days/YYYY-MM-DD.md next to bin/.
 The persistent categorized checklist lives in planner/checklist.md.
-Calendar commitments are read live through tari-google and never stored here.
-This helper cannot create, modify, or delete Calendar events.
+The planner is local-only by default: no Calendar is read. The ported Calendar
+path (live reads through tari-google, never stored here) runs only with
+TARI_CALENDAR=google. This helper cannot create, modify, or delete Calendar events.
 
     day-planner show [DAY] [--schedule] [--json]
     day-planner free [DAY] [--after TIME] [--before TIME] [--min DURATION]
@@ -28,7 +29,8 @@ REF: block/task id, unique title text, or block start time @16:00.
 STATUS: priority | start | in-progress | none.
 ANCHOR: time or unique title of a counted Calendar event or Planner block.
 
-Calendar reads need the isolated TARI_GOOGLE_ACCOUNT. Calendar commands accept
+Only with TARI_CALENDAR=google: Calendar reads need the isolated
+TARI_GOOGLE_ACCOUNT, and Calendar commands accept
 --count EVENT_ID to include a particular shared event, and --no-calendar only
 when the user has explicitly agreed to proceed without Calendar checks.
 --allow-overlap requires confirmation of the specific overlap.
@@ -538,8 +540,14 @@ def read_calendar(day, count_ids=()):
     return sorted(counted, key=order), sorted(skipped, key=order), warnings, notes
 
 
+def calendar_enabled():
+    return os.environ.get("TARI_CALENDAR", "off") == "google"
+
+
 def calendar_for(day, args, needed=True):
-    """(events, warnings). With --no-calendar, or when a read-only view fails, events is []."""
+    """(events, warnings). Local-only mode, --no-calendar, or a failed read-only view give []."""
+    if not calendar_enabled():
+        return [], []  # no Calendar configured: local entries are the whole schedule
     if getattr(args, "no_calendar", False):
         return [], ["Calendar was not checked."]
     try:
@@ -638,7 +646,8 @@ def cmd_show(args):
             warnings.append(message)
             warning_details.append({"code": code, "source": source, "message": message,
                                     "count": len(current.bad)})
-    if getattr(args, "no_calendar", False):
+    local_only = not calendar_enabled() or args.no_calendar
+    if calendar_enabled() and args.no_calendar:
         warning_details.append({"code": "CALENDAR_NOT_CHECKED", "source": "calendar",
                                 "message": "Calendar was not checked."})
     elif warnings and not warning_details:
@@ -653,8 +662,8 @@ def cmd_show(args):
         keep = ("kind", "id", "title", "start", "end", "allday", "free", "start_at", "end_at", "time_note")
         items = [{k: i[k] for k in keep if k in i} for i in items]
         print(json.dumps({"date": day.isoformat(), "time_zone": TZ_NAME, "schedule": items,
-                          "scope": "local" if args.no_calendar else "calendar-and-local",
-                          "calendar_complete": not args.no_calendar and not any("Calendar" in w for w in warnings),
+                          "scope": "local" if local_only else "calendar-and-local",
+                          "calendar_complete": not local_only and not any("Calendar" in w for w in warnings),
                           "warnings": warnings,
                           "warning_details": warning_details, "data_status": data_status,
                           "complete": data_status == "complete",
@@ -690,6 +699,9 @@ def cmd_free(args):
 def cmd_excluded(args):
     """Diagnostic, on request only: the Calendar events normal commands leave out."""
     day = parse_day(args.day)
+    if not calendar_enabled():
+        print("No Calendar is configured; the planner is local-only, so no events are excluded.")
+        return
     _, skipped, _, notes = read_calendar(day)
     out = [f"Calendar events NOT counted on {day_title(day)} (never shown, never busy):"]
     out += [f"  {i['id']}  {line(i)}  [{i['why']}: {i['calendar']}]" for i in skipped] or ["  (none)"]

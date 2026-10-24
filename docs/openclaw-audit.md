@@ -1,5 +1,8 @@
 # OpenClaw foundation audit — 2026-10-23
 
+> **Google removed (2026-10-24, branch `pipecat-tari`):** Tari no longer has Google
+> Calendar or Gmail; its day planner is local-only. Calendar and Gmail content below
+> is a historical record and does not describe the current setup.
 
 ## Planner integration acceptance
 

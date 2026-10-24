@@ -44,9 +44,13 @@ class FoundationBootstrapTests(unittest.TestCase):
         self.assertEqual((self.root / ".local/state/workspace/IDENTITY.md").read_text().count(
             "Example Assistant"), 1)
         self.assertNotIn("OPENAI_API_KEY=", original)
-        self.assertTrue((self.root / ".local/state/workspace/bin/tari-google").exists())
+        self.assertTrue((self.root / ".local/state/workspace/bin/day-planner").exists())
+        self.assertFalse((self.root / ".local/state/workspace/bin/tari-google").exists())
+        self.assertNotIn("GOOGLE", original)
+        self.assertNotIn("GOG_", original)
+        self.assertFalse((self.root / ".local/google").exists())
         self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual((self.root / ".local/state/workspace/bin/tari-google").stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.root / ".local/state/workspace/bin/day-planner").stat().st_mode & 0o777, 0o700)
         for directory in (self.root / ".local").rglob("*"):
             if directory.is_dir():
                 self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
@@ -148,7 +152,7 @@ class FoundationBootstrapTests(unittest.TestCase):
         manager.install_planner()
         self.assertTrue((workspace / "AGENTS.md").read_text().startswith(agent_before.rstrip()))
         self.assertIn(manager.PLANNER_SECTION, (workspace / "AGENTS.md").read_text())
-        self.assertIn("Calendar supports full event management", (workspace / "AGENTS.md").read_text())
+        self.assertIn("This demo has no calendar or email access", (workspace / "AGENTS.md").read_text())
         self.assertEqual((env_path.read_bytes(), config.read_bytes()), protected)
         self.assertEqual(memory.read_text(), "Private fixture, preserve.")
         self.assertEqual((workspace / "bin/day-planner").stat().st_mode & 0o777, 0o700)

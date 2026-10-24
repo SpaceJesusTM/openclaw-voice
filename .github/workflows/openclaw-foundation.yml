@@ -20,13 +20,12 @@ jobs:
       - name: Offline Python and configuration checks
         run: |
           python -m unittest discover -s infra/openclaw/tests -v
-          python -m py_compile infra/openclaw/manage.py infra/openclaw/workspace/bin/tari-google infra/openclaw/workspace/bin/day-planner
+          python -m py_compile infra/openclaw/manage.py infra/openclaw/workspace/bin/day-planner
           python -m json.tool infra/openclaw/config/openclaw.json >/dev/null
       - name: Generate mock private installation (no credentials or calls)
         run: |
           python infra/openclaw/manage.py init --timezone UTC --name Demo
           test -f infra/openclaw/.local/state/openclaw.json
-          test -f infra/openclaw/.local/state/workspace/bin/tari-google
           test -f infra/openclaw/.local/state/workspace/bin/day-planner
       - name: Validate Docker Compose manifest
         run: |
