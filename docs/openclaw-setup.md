@@ -7,7 +7,9 @@ Gmail is read-only; Google Calendar supports full native management.
 **Current checkpoint:** Docker build, startup, schema, health, authentication
 boundary and isolated storage passed on macOS/arm64. The audit-created demo is
 running at `127.0.0.1:18939`. ChatGPT OAuth, real Sol inference and two-turn
-continuity pass on this checkout; continue at step 3 for Google setup.
+continuity pass on this checkout. Google reads and native Calendar management
+have since been authorized and validated; the local planner is also installed.
+New accounts continue at step 3 for Google setup.
 Fresh installations continue at step 2. See the [audit evidence](openclaw-audit.md).
 
 ## 1. Fresh installation
@@ -325,3 +327,9 @@ References:
 [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth),
 [refresh-token policy](https://developers.google.com/identity/protocols/oauth2/).
 Pinned runtime inspection takes precedence over examples for newer releases.
+
+## Local planner and checklist
+
+Follow [planner setup, commands and timezone evidence](planner.md). Fresh init
+includes it; an existing workspace uses `python3 infra/openclaw/manage.py install-planner`
+for a targeted addition. No credentials or sessions are reset.

@@ -4,14 +4,17 @@ From repository root (Python 3.10+):
 
 ```sh
 python3 -m unittest discover -s infra/openclaw/tests -v
-python3 -m py_compile infra/openclaw/manage.py infra/openclaw/workspace/bin/tari-google
+python3 -m py_compile infra/openclaw/manage.py infra/openclaw/workspace/bin/tari-google infra/openclaw/workspace/bin/day-planner
 python3 -m json.tool infra/openclaw/config/openclaw.json >/dev/null
 ```
 
 These checks verify bootstrap isolation, idempotence, permissions, legacy configuration compatibility,
-CLI forwarding, Gmail read-only access and native Calendar-management routing\nwith fictional mocks;
+CLI forwarding, Gmail read-only access and native Calendar-management routing, planner commands, checklist semantics, DST, Calendar completeness and safe storage
+with fictional mocks;
 they **do not** authenticate the ChatGPT account, build Docker images, run
 Higgs/Pipecat, or call Google APIs. Run the actual Docker checks with
 `python3 infra/openclaw/manage.py doctor` after starting the demo.
 See [audit evidence](../../../docs/openclaw-audit.md) and
 [owner acceptance steps](../../../docs/openclaw-setup.md).
+
+See [planner usage and live acceptance](../../../docs/planner.md).

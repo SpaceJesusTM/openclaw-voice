@@ -13,6 +13,7 @@ build/
 coverage/
 captures/
 .local/
+infra/openclaw/workspace/planner/
 .DS_Store
 *.log
 

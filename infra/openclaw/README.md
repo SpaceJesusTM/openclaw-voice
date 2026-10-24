@@ -26,3 +26,7 @@ utility selection and credentials natively; ClawVoice imposes no model/profile a
 See the [audit results](../../docs/openclaw-audit.md). To keep future personalization flexible, voice identity,
 agent display name, and multi-agent routing belong to the future ClawVoice
 application layer.
+
+The persistent [Tari day planner](../../docs/planner.md) adds local blocks, commutes
+and a categorized checklist. Existing installations can run `manage.py install-planner`
+to add it without resetting private state; use `manage.py planner show tomorrow`.

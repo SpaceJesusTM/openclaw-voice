@@ -2,7 +2,7 @@
 """Owner-side manager for the isolated ClawVoice OpenClaw demo runtime.
 
 Never reads ~/.openclaw, ~/.config/gogcli, production Tari, or any other checkout.
-Run: python3 infra/openclaw/manage.py init|start|stop|status|logs|doctor|openclaw|gog|google|chat
+Run: python3 infra/openclaw/manage.py init|install-planner|planner|start|stop|status|logs|doctor|openclaw|gog|google|chat
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent
 LOCAL = ROOT / ".local"
 DEFAULT_MODEL = "openai/gpt-6.1-sol"
 DEFAULT_PORT = 18939
+PLANNER_SECTION = "## Local day planner and checklist"
 
 
 def owned_path(path: Path) -> Path:
@@ -132,7 +133,8 @@ def initialize(timezone: str, name: str, port: int) -> None:
     templates = ROOT / "workspace"
     count = 0
     for source in sorted(templates.rglob("*")):
-        if source.is_file() and source.suffix != ".pyc" and "__pycache__" not in source.parts:
+        if (source.is_file() and source.suffix != ".pyc" and "__pycache__" not in source.parts
+                and source.relative_to(templates).parts[0] != "planner"):
             target = owned_path(LOCAL / "state/workspace" / source.relative_to(templates))
             existed = target.exists()
             text = source.read_text(encoding="utf-8").replace(
@@ -143,6 +145,53 @@ def initialize(timezone: str, name: str, port: int) -> None:
     print(f"Initialized isolated ClawVoice state; seeded {count} workspace files.")
     print("Next: configure ChatGPT OAuth and a separate Google account (see README).")
     print("Existing private files are preserved; repeat init will not overwrite them.")
+
+
+def install_planner() -> None:
+    """Install only planner code/skill and append instructions; preserve user state."""
+    load_env()
+    workspace = owned_path(LOCAL / "state/workspace")
+    if not workspace.is_dir():
+        raise RuntimeError("Missing demo workspace; initialize the installation first")
+    plans = []
+    for relative in ("bin/day-planner", "skills/tari-day-planner/SKILL.md", "AGENTS.md", "TOOLS.md"):
+        source = (ROOT / "workspace" / relative).read_text()
+        target = owned_path(workspace / relative)
+        existing = target.read_text() if target.exists() else None
+        if relative in ("AGENTS.md", "TOOLS.md"):
+            if existing is None:
+                raise RuntimeError("Missing foundation instructions; restore " + relative + " before installing planner")
+            section = PLANNER_SECTION + source.split(PLANNER_SECTION, 1)[1]
+            if existing and PLANNER_SECTION in existing:
+                if section.strip() not in existing:
+                    raise RuntimeError("Existing planner instructions differ from the template; review and merge " + relative)
+                continue
+            updated = (existing or "").rstrip() + "\n\n" + section.rstrip() + "\n"
+        else:
+            if existing is not None and existing != source:
+                raise RuntimeError("Existing planner code/skill differs from the template; review and merge " + relative)
+            updated = source
+        if existing != updated:
+            plans.append((relative, target, existing, updated))
+    backup_root = LOCAL / "backups" / ("planner-install-" + secrets.token_hex(8))
+    for relative, target, existing, updated in plans:
+        if existing is not None:
+            write_if_absent(backup_root / relative, existing)
+        private_dir(target.parent)
+        if (target.read_text() if owned_path(target).exists() else None) != existing:
+            raise RuntimeError("Workspace changed during planner installation; retry")
+        temporary = target.with_name(".planner-install-" + secrets.token_hex(8))
+        mode = 0o700 if relative.startswith("bin/") else 0o600
+        try:
+            fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, mode)
+            with os.fdopen(fd, "w") as handle:
+                handle.write(updated)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    print(f"Installed planner: {len(plans)} workspace files changed; private state preserved.")
 
 
 def compose_args(*command: str) -> tuple[list[str], dict[str, str]]:
@@ -239,8 +288,8 @@ def main() -> int:
     init.add_argument("--timezone", default="America/Toronto")
     init.add_argument("--name", default="Tari")
     init.add_argument("--port", type=int, default=DEFAULT_PORT)
-    for action in ("start", "stop", "status", "logs", "doctor", "openclaw", "gog", "google"):
-        sub.add_parser(action, add_help=action not in ("openclaw", "gog", "google"))
+    for action in ("install-planner", "planner", "start", "stop", "status", "logs", "doctor", "openclaw", "gog", "google"):
+        sub.add_parser(action, add_help=action not in ("planner", "openclaw", "gog", "google"))
     speak = sub.add_parser("chat")
     speak.add_argument("prompt")
     speak.add_argument("--conversation", default="clawvoice-demo")
@@ -252,6 +301,13 @@ def main() -> int:
         return 0
     if args.action == "start":
         return run_compose("up", "-d", "--build", "--wait", "--wait-timeout", "90", "openclaw")
+    if args.action == "install-planner":
+        if rest:
+            parser.error("Unexpected arguments")
+        install_planner()
+        return 0
+    if args.action == "planner":
+        return run_compose("exec", "-T", "openclaw", "./bin/day-planner", *rest)
     if args.action == "stop":
         return run_compose("stop", "openclaw")
     if args.action == "status":

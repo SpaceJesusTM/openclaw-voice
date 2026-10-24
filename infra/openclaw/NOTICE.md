@@ -1,7 +1,8 @@
 # Reuse and licenses
 
 This minimal integration adapts the deployment pattern, Google command wrapper,
-and Calendar/Gmail skills from
+Calendar/Gmail skills, deterministic day-planner helper, planner skill and original
+34 planner regression tests from
 https://github.com/SpaceJesusTM/tari-public (MIT license), audited against
 commit c43455a43f59a554fd6e9e96934741ac4397a27d.
 The complete copyright and permission notice is preserved in

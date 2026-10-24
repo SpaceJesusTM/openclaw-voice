@@ -126,6 +126,52 @@ class FoundationBootstrapTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             manager.owned_path(self.root / ".." / "outside")
 
+    def legacy_planner_workspace(self):
+        manager.initialize("America/Toronto", "Demo", 19501)
+        workspace = self.root / ".local/state/workspace"
+        for relative in ("bin/day-planner", "skills/tari-day-planner/SKILL.md"):
+            (workspace / relative).unlink()
+        for relative in ("AGENTS.md", "TOOLS.md"):
+            path = workspace / relative
+            path.write_text(path.read_text().split(manager.PLANNER_SECTION)[0].rstrip() + "\n\nOwner custom note.\n")
+        return workspace
+
+    def test_targeted_planner_install_preserves_identity_credentials_and_state(self):
+        workspace = self.legacy_planner_workspace()
+        env_path = self.root / ".local/runtime.env"
+        config = self.root / ".local/state/openclaw.json"
+        protected = (env_path.read_bytes(), config.read_bytes())
+        agent_before = (workspace / "AGENTS.md").read_text()
+        (workspace / "memory").mkdir()
+        memory = workspace / "memory/owner.md"
+        memory.write_text("Private fixture, preserve.")
+        manager.install_planner()
+        self.assertTrue((workspace / "AGENTS.md").read_text().startswith(agent_before.rstrip()))
+        self.assertIn(manager.PLANNER_SECTION, (workspace / "AGENTS.md").read_text())
+        self.assertIn("Calendar supports full event management", (workspace / "AGENTS.md").read_text())
+        self.assertEqual((env_path.read_bytes(), config.read_bytes()), protected)
+        self.assertEqual(memory.read_text(), "Private fixture, preserve.")
+        self.assertEqual((workspace / "bin/day-planner").stat().st_mode & 0o777, 0o700)
+        content = (workspace / "AGENTS.md").read_bytes()
+        manager.install_planner()
+        self.assertEqual((workspace / "AGENTS.md").read_bytes(), content)
+        self.assertFalse((workspace / "planner").exists())
+
+    def test_planner_install_refuses_independently_modified_helper(self):
+        workspace = self.legacy_planner_workspace()
+        (workspace / "bin/day-planner").write_text("owner's existing helper")
+        before = (workspace / "AGENTS.md").read_bytes()
+        with self.assertRaises(RuntimeError):
+            manager.install_planner()
+        self.assertEqual((workspace / "AGENTS.md").read_bytes(), before)
+
+    def test_init_never_seeds_personal_planner_data_from_template(self):
+        path = self.root / "workspace/planner/days/2026-10-24.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("Private accidental fixture.")
+        manager.initialize("UTC", "Demo", 19501)
+        self.assertFalse((self.root / ".local/state/workspace/planner").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,70 @@
 # OpenClaw foundation audit — 2026-10-23
 
+
+## Planner integration acceptance
+
+This is the current acceptance record; earlier snapshots below retain their
+historical authorization status. Before this port, the owner had completed
+ChatGPT OAuth, Gmail reads and native Calendar create/update/read-back/delete,
+including conversational Google tool use. Google setup is no longer pending
+on this checkout.
+
+The original Tari Public day planner, skill and 34-test suite were ported,
+with targeted ClawVoice persistence, Calendar-completeness and Toronto/DST
+adaptations. See [planner usage and design details](planner.md).
+
+- **78 offline tests pass:** 46 planner tests, 12 bootstrap/installation tests,
+  and 20 Google tests. All Calendar calls in planner tests are mocked reads;
+  tests use isolated temporary Markdown state. Syntax/configuration checks pass.
+- Existing-workspace installation changed only four planner-related files:
+  helper, skill, and appended AGENTS/TOOLS sections. Private backups were made.
+  Byte checks before/after installation preserved runtime env/config, Google
+  wrapper/store and existing agent files. No credentials were reset.
+- Actual helper execution through Docker showed today/tomorrow with complete
+  Calendar coverage. A disposable local block was placed, read back, resized,
+  survived an actual container stop/start, and was removed.
+- A disposable checklist section/task exercised priority → in-progress,
+  complete/reopen, rename/remove and section cleanup. Completion preserved the
+  independent status. No fixture block/task remains.
+- Overlapping local writes were refused without changing Markdown. A
+  process-only missing-account simulation refused a checked write; its read-only
+  view retained local data with explicit incomplete-Calendar warnings.
+- The real October 26 smoke event rendered at **15:00–15:15 Toronto**, and a
+  conflicting local allocation was refused without changing the event or plans.
+  Stored API times were **19:00–19:15Z**, which are the correct instants. The
+  reported 7 PM UI display is consistent with UTC display settings; no stored
+  event bug was found and no timezone/event correction was made.
+- **Real agent acceptance passed:** a fresh Gateway conversation requested a
+  local block in a checked free interval. Its exact title/time/ID were verified
+  in persisted Markdown and helper JSON. A second natural-language request
+  retrieved it. Native transcript records contain actual `exec` tool calls to
+  `day-planner add` and `day-planner show` for both verification and retrieval.
+  Native session metadata records **openai / gpt-6.1-sol**. The fixture was then
+  removed through the helper.
+- Calendar event identities and start/end values for the validation day matched
+  before/after CLI and conversational operations. No Calendar write was issued
+  during this port. The unchanged management profile's calendar discovery read
+  passed; native recurrence/attendee management remains available. The prior
+  owner-verified Calendar write lifecycle was preserved, not repeated here.
+- Live Gmail search still passed. Runtime env, OpenClaw config and Google
+  wrapper hashes remained unchanged; pre-existing session IDs survived restart
+  and agent testing. OAuth profile/store files were untouched by the port.
+  Private validation responses/journals remain ignored under `.local/`.
+- `manage.py doctor` passed native config validation, Gateway health,
+  unauthenticated rejection, authenticated routing and healthy loopback-only
+  Docker startup. The demo remains running.
+
+Caveats: local Markdown cannot encode repeated clock-hour folds, so ambiguous
+or nonexistent local ranges are rejected. Fold-crossing Calendar busy intervals
+are conservative. The faithful cross-day move uses two individual file writes;
+a storage failure between them may leave a duplicate, requiring inspection
+before retry. The helper is intended for single-user operations, not concurrent
+writers. The unrelated owner file `docs/.Rhistory` was left untracked and untouched.
+No production Tari, voice experiment, Google wrapper, OAuth scope or model policy
+was changed.
+
+## Historical foundation snapshots
+
 **Calendar management update:** the owner requested full Calendar access. The
 integration now uses native gog Calendar management through a separate
 `tari-calendar-write` profile requesting full `calendar` OAuth scope. Gmail
