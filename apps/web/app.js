@@ -28,6 +28,7 @@ const ui = {
   levelTimer: null,
   remoteAnalyser: null,
   localAnalyser: null,
+  thinking: false,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -68,6 +69,18 @@ function logLine(listId, text) {
 function hexToSoft(hex, alpha) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+// ------------------------------------------------------------------ stage, activity, preview
+// Classic scripts loaded before this module: the orb waveform (stage.js), the
+// "Now" list (activity.js) and the coding agent's preview pane (preview.js).
+const stage = globalThis.ClawStage ? globalThis.ClawStage.mount($("orb")) : null;
+const activity = globalThis.ClawActivity ? globalThis.ClawActivity.mount($("activity")) : null;
+const preview = globalThis.ClawPreview ? globalThis.ClawPreview.mount(document) : null;
+const clip = (text, n = 64) => (text.length > n ? `${text.slice(0, n - 1).trimEnd()}…` : text);
+
+function syncPreview() {
+  preview?.sync({ agent: ui.agent, jobs: [...ui.jobs.values()], topics: [...(ui.topicRows?.values() || [])] });
 }
 
 // ------------------------------------------------------------------ agent + state
@@ -133,6 +146,7 @@ async function selectAgent(agentId) {
   ui.topicRows = new Map();
   ui.lastMetrics = null;
   ui.lastPoll = 0;
+  activity?.reset();
   if (typeof history !== "undefined" && history.replaceState) {
     const url = new URL(location.href);
     url.searchParams.set("agent", next.id);
@@ -162,15 +176,18 @@ async function init() {
   } catch (error) {
     banner("ClawVoice server is not reachable. Start it with `make dev` in services/voice.");
   }
-  ui.poll = setInterval(refreshState, 4000);
+  ui.poll = setInterval(refreshState, 2500);
   setOrb();
+  setButtons();
+  // Long enough for the first preview probe; later openings animate.
+  globalThis.setTimeout?.(() => document.body?.classList?.remove("booting"), 1500);
 }
 
 function renderIdentity() {
   const a = ui.agent;
   if (!a) return;
   document.title = `ClawVoice · ${a.display_name}`;
-  $("agent-name").textContent = `${a.display_name} ${a.emoji || ""}`.trim();
+  $("agent-name").textContent = a.display_name;
   $("agent-role").textContent = a.role || "";
   document.documentElement.style.setProperty("--accent", a.color);
   document.documentElement.style.setProperty("--accent-soft", hexToSoft(a.color, 0.22));
@@ -178,8 +195,11 @@ function renderIdentity() {
 
 async function refreshState(force = false) {
   if (!ui.agent) return;
-  // While connected, live updates arrive over RTVI; poll only as a slow backstop.
-  if (!force && ui.connected && Date.now() - (ui.lastPoll || 0) < 15000) return;
+  // While a task runs, poll often so its tool steps reach "Now". Otherwise live
+  // updates arrive over RTVI and polling is a slow backstop.
+  const busy = [...ui.jobs.values()].some((j) => ACTIVE.has(j.status));
+  const gap = busy ? 2000 : ui.connected ? 15000 : 3500;
+  if (!force && Date.now() - (ui.lastPoll || 0) < gap) return;
   const requestedAgentId = ui.agent.id;
   ui.lastPoll = Date.now();
   try {
@@ -211,7 +231,7 @@ function renderGateway(gateway) {
   if (gateway.config_error) {
     badge.textContent = "Gateway · configuration error";
     badge.className = "badge bad";
-    banner(`OpenClaw Gateway configuration problem: ${gateway.config_error}`);
+    banner(`${ui.agent?.display_name || "This agent"} isn't connected to its OpenClaw gateway on this machine. ${gateway.config_error}`);
     return;
   }
   if (mode === "ws") {
@@ -234,28 +254,33 @@ function renderJobs() {
   const list = $("jobs");
   const jobs = [...ui.jobs.values()].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 12);
   const active = jobs.filter((j) => ACTIVE.has(j.status)).length;
-  $("jobs-count").textContent = jobs.length ? `${active} active` : "";
+  $("jobs-count").textContent = active ? `${active} running` : "";
   setOrb();
+  syncPreview();
+  activity?.jobTools(jobs);
   if (!jobs.length) {
     list.innerHTML = '<li class="empty">No tasks yet.</li>';
     return;
   }
   list.innerHTML = jobs
     .map((job) => {
-      const verified = job.verification === "verified" ? " · ✓ verified" : job.verification === "mismatch" ? " · ⚠ mismatch" : "";
-      const timing = [];
-      if (job.timings?.dispatch_ack_ms != null) timing.push(`ack ${job.timings.dispatch_ack_ms} ms`);
-      if (job.timings?.run_ms != null) timing.push(`run ${(job.timings.run_ms / 1000).toFixed(1)} s`);
-      if (job.timings?.announce_delay_ms != null) timing.push(`announced +${(job.timings.announce_delay_ms / 1000).toFixed(1)} s`);
-      const cancel = ACTIVE.has(job.status) && !job.cancel_requested
-        ? `<button class="link" data-cancel="${esc(job.job_id)}">Cancel</button>` : "";
-      return `<li class="job">
+      const running = ACTIVE.has(job.status);
+      const verified = job.verification === "verified" ? " · verified" : job.verification === "mismatch" ? " · mismatch" : "";
+      const status = running ? `${job.status} · ${job.age}` : `${job.status}${verified}`;
+      // Ids, transport and timings stay available on hover rather than as visible clutter.
+      const details = [job.job_id, job.age, job.transport];
+      if (job.timings?.dispatch_ack_ms != null) details.push(`ack ${job.timings.dispatch_ack_ms} ms`);
+      if (job.timings?.run_ms != null) details.push(`run ${(job.timings.run_ms / 1000).toFixed(1)} s`);
+      if (job.timings?.announce_delay_ms != null) details.push(`announced +${(job.timings.announce_delay_ms / 1000).toFixed(1)} s`);
+      if (job.announcement && job.announcement !== "none") details.push(`announce: ${job.announcement}`);
+      const cancel = running && !job.cancel_requested
+        ? `<div class="job-meta"><button class="link" data-cancel="${esc(job.job_id)}">Cancel</button></div>` : "";
+      return `<li class="job" title="${esc(details.filter(Boolean).join(" · "))}">
         <div class="job-top"><span class="job-title">${esc(job.title)}</span>
-          <span class="chip ${esc(job.status)}">${esc(job.status)}${esc(verified)}</span></div>
-        ${job.outcome_text ? `<div class="job-outcome">${esc(job.outcome_text)}</div>` : ""}
-        <div class="job-meta"><span>${esc(job.job_id)}</span><span>${esc(job.age)}</span>
-          ${job.transport ? `<span>${esc(job.transport)}</span>` : ""}${timing.map((t) => `<span>${esc(t)}</span>`).join("")}
-          ${job.announcement && job.announcement !== "none" ? `<span>announce: ${esc(job.announcement)}</span>` : ""}${cancel}</div>
+          <span class="chip ${esc(job.status)}">${esc(status)}</span></div>
+        ${running ? '<div class="job-run" aria-hidden="true"></div>' : ""}
+        ${!running && job.outcome_text ? `<div class="job-outcome" title="${esc(job.outcome_text)}">${esc(job.outcome_text)}</div>` : ""}
+        ${cancel}
       </li>`;
     })
     .join("");
@@ -278,6 +303,7 @@ function upsertJob(job, event) {
   if (!job || (job.agent_id && ui.agent?.id && job.agent_id !== ui.agent.id)) return;
   ui.jobs.set(job.job_id, job);
   renderJobs();
+  activity?.job(job, event);
   if (event === "job.finished" && !ui.noticed.has(job.job_id)) {
     ui.noticed.add(job.job_id);
     const icon = job.status === "completed" ? (job.verification === "verified" ? "✓" : "•") : job.status === "cancelled" ? "⨯" : "⚠";
@@ -303,6 +329,7 @@ function renderTopics(cache) {
       </li>`;
     })
     .join("") || '<li class="empty">No topics configured.</li>';
+  syncPreview();
 }
 
 function updateTopic(row) {
@@ -335,15 +362,16 @@ function setTurnText(el, text) {
 function setOrb() {
   const orb = $("orb");
   const working = [...ui.jobs.values()].some((j) => ACTIVE.has(j.status));
+  const thinking = ui.connected && ui.thinking && !ui.botSpeaking && !ui.userSpeaking;
   let state = "offline";
   let label = ui.connecting ? "Connecting…" : "Not connected";
   if (ui.connected) {
     state = ui.botSpeaking ? "speaking" : ui.userSpeaking ? "listening" : "idle";
-    label = ui.botSpeaking ? "Speaking" : ui.userSpeaking ? "Listening" : "Ready — speak or type";
+    label = ui.botSpeaking ? "Speaking" : ui.userSpeaking ? "Listening" : thinking ? "Thinking" : "Ready — speak or type";
   }
-  if (working) label += " · working in background";
-  if (ui.pendingNotices) label += " · update waiting to speak";
-  orb.className = `orb state-${state}${working ? " working" : ""}${ui.pendingNotices ? " waiting" : ""}`;
+  if (working) label += " · working in the background";
+  if (ui.pendingNotices) label += " · has an update for you";
+  orb.className = `orb state-${state}${thinking ? " thinking" : ""}${working ? " working" : ""}${ui.pendingNotices ? " waiting" : ""}`;
   $("agent-state").textContent = label;
 }
 
@@ -423,6 +451,7 @@ async function connect() {
     ui.stream = $("typed-only").checked ? silentStream() : await getMicrophone();
     applyMicGate(false);
     ui.localAnalyser = $("typed-only").checked ? null : analyserFor(ui.stream);
+    stage?.setAnalysers({ local: ui.localAnalyser });
     const start = await postJSON("/start", { transport: "webrtc", body: { agent: ui.agent.id } });
     const pc = new RTCPeerConnection({ iceServers: start.iceConfig?.iceServers || [] });
     ui.pc = pc;
@@ -438,6 +467,7 @@ async function connect() {
       audio.srcObject = stream;
       audio.play().catch(() => banner("Click anywhere on the page to allow audio playback.", "info"));
       ui.remoteAnalyser = analyserFor(stream);
+      stage?.setAnalysers({ remote: ui.remoteAnalyser });
     };
     pc.onconnectionstatechange = () => {
       if (["failed", "disconnected"].includes(pc.connectionState) && ui.connected) {
@@ -499,7 +529,9 @@ function teardown() {
   ui.stream?.getTracks().forEach((t) => t.stop());
   $("bot-audio").srcObject = null;
   Object.assign(ui, { dc: null, pc: null, stream: null, connected: false, connecting: false, botTurn: null,
-    userInterim: null, botSpeaking: false, userSpeaking: false, pendingNotices: 0 });
+    userInterim: null, botSpeaking: false, userSpeaking: false, pendingNotices: 0, thinking: false,
+    localAnalyser: null, remoteAnalyser: null });
+  stage?.setAnalysers({ local: null, remote: null });
   $("model-badge").textContent = `${MODEL} · not connected`;
   $("model-badge").className = "badge";
   setButtons();
@@ -507,8 +539,16 @@ function teardown() {
 }
 
 function setButtons() {
+  // The stylesheet shows one main call button at a time from these attributes.
+  document.body?.setAttribute?.("data-call", ui.connected ? "live" : ui.connecting ? "connecting" : "idle");
+  document.body?.setAttribute?.("data-ptt", $("ptt-mode").checked ? "on" : "off");
   $("connect").disabled = ui.connected || ui.connecting;
-  $("connect").textContent = ui.connecting ? "Connecting…" : "Connect";
+  $("connect").setAttribute("aria-label", ui.connecting ? "Connecting" : "Connect");
+  $("connect").setAttribute("data-busy", String(ui.connecting));
+  $("keyboard").setAttribute("aria-pressed", String($("typed-only").checked));
+  $("keyboard").setAttribute("title", ui.connected ? "Type a message" : $("typed-only").checked
+    ? "Type only: no microphone on the next connect" : "Type instead of talking");
+  $("message").placeholder = ui.connected ? `Message ${ui.agent?.display_name || "the agent"}` : "Connect to type a message";
   $("disconnect").disabled = !ui.connected;
   $("mute").disabled = !ui.connected || $("typed-only").checked || $("ptt-mode").checked;
   $("typed-only").disabled = ui.connected || ui.connecting;
@@ -532,6 +572,7 @@ function onRtvi(raw) {
       if (data.final) {
         if (ui.userInterim) { setTurnText(ui.userInterim, data.text); ui.userInterim.classList.remove("interim"); ui.userInterim = null; }
         else addTurn("user", data.text);
+        activity?.newTurn(`Heard “${clip(data.text)}”`);
       } else if (ui.userInterim) setTurnText(ui.userInterim, data.text);
       else ui.userInterim = addTurn("user", data.text, { interim: true });
       break;
@@ -542,15 +583,20 @@ function onRtvi(raw) {
       ui.userSpeaking = false; setOrb();
       break;
     case "bot-started-speaking":
-      ui.botSpeaking = true; ui.userSpeaking = false; setOrb();
+      ui.botSpeaking = true; ui.userSpeaking = false; ui.thinking = false; setOrb();
+      activity?.speaking();
       break;
     case "bot-stopped-speaking":
       ui.botSpeaking = false; setOrb();
+      activity?.settle();
       break;
     case "bot-llm-started":
-    case "bot-llm-stopped":
       // One bubble per model response (audio pauses between sentences do not split it).
-      ui.botTurn = null;
+      ui.botTurn = null; ui.thinking = true; setOrb();
+      if (!ui.botSpeaking) activity?.thinking();
+      break;
+    case "bot-llm-stopped":
+      ui.botTurn = null; ui.thinking = false; setOrb();
       break;
     case "bot-interrupted": {
       const bubbles = document.querySelectorAll(".turn.bot");
@@ -619,6 +665,7 @@ function onServerMessage(data) {
       updateTopic(data.row);
       break;
     case "clawvoice.tool": {
+      activity?.tool(data);
       const extra = [data.cache && `cache ${data.cache}`, data.status, data.age_seconds != null && `age ${data.age_seconds}s`, data.read_ms != null && `read ${data.read_ms} ms`, data.job_id]
         .filter(Boolean).join(" · ");
       logLine("tools", `${data.phase === "started" ? "▶" : "■"} ${data.name}${data.ms != null ? ` ${data.ms} ms` : ""}${extra ? ` (${extra})` : ""}`);
@@ -656,7 +703,7 @@ function applyMicGate(held = talkHeld) {
   const track = ui.stream?.getAudioTracks()[0];
   if (track) track.enabled = !$("typed-only").checked && !micMuted && (!$("ptt-mode").checked || held);
   $("push-talk").setAttribute("aria-pressed", String(held));
-  $("mute").textContent = micMuted ? "Unmute mic" : "Mute mic";
+  $("mute").setAttribute("aria-label", micMuted ? "Unmute microphone" : "Mute microphone");
   $("mute").setAttribute("aria-pressed", String(micMuted));
 }
 $("mute").addEventListener("click", () => { micMuted = !micMuted; applyMicGate(); });
@@ -693,8 +740,30 @@ $("composer").addEventListener("submit", (event) => {
   if (!text || !ui.connected) return;
   if (sendRtvi("send-text", { content: text, options: { audio_response: true, run_immediately: true } })) {
     addTurn("user", text);
+    activity?.newTurn(`Read “${clip(text)}”`);
     $("message").value = "";
   }
+});
+$("keyboard").addEventListener("click", () => {
+  if (ui.connected) { $("message").focus?.(); return; }
+  $("typed-only").checked = !$("typed-only").checked;
+  setButtons();
+});
+
+// Settings and details: model, gateway, voice options, fast context, diagnostics.
+function setSettings(open) {
+  $("settings").hidden = !open;
+  $("settings-toggle").setAttribute("aria-expanded", String(open));
+}
+$("settings-toggle").addEventListener("click", (event) => {
+  event.stopPropagation?.();
+  setSettings($("settings").hidden);
+});
+document.addEventListener("click", (event) => {
+  if (!$("settings").hidden && !event.target?.closest?.("#settings, #settings-toggle")) setSettings(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("settings").hidden) setSettings(false);
 });
 window.addEventListener("beforeunload", () => ui.connected && sendRtvi("disconnect-bot", {}));
 

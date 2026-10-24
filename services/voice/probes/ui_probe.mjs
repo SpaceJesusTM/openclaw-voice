@@ -69,7 +69,10 @@ try {
 
   await page.locator('#connect').click();
   await expect(page.locator('#model-badge')).toContainText('higgs-realtime-1.5-preview · verified', { timeout: 30000 });
+  // Voice options live in the settings menu.
+  await page.locator('#settings-toggle').click();
   await page.locator('#ptt-mode').check();
+  await page.keyboard.press('Escape');
   expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(false);
   await expect(page.locator('#push-talk')).toBeEnabled();
   await page.locator('#push-talk').hover();
@@ -77,7 +80,9 @@ try {
   expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(true);
   await page.mouse.up();
   expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(false);
+  await page.locator('#settings-toggle').click();
   await page.locator('#ptt-mode').uncheck();
+  await page.keyboard.press('Escape');
   expect(await page.evaluate(() => window.__micTrack.enabled)).toBe(true);
   mark('push-to-talk-microphone-gate');
 
@@ -117,7 +122,7 @@ try {
   mark('disconnect');
 
   // Switch to Astra via the agent selector and verify independent session + state.
-  await page.locator('#agent-selector [data-agent-id="astra"]').click();
+  await page.locator('#agent-selector [data-agent="astra"]').click();
   await expect(page.locator('#agent-name')).toContainText('Astra');
   await expect(page.locator('#gateway-badge')).toContainText(/HTTP|WebSocket/, { timeout: 15000 });
   await expect(page.locator('#topics')).toContainText('projects.active', { timeout: 15000 });
