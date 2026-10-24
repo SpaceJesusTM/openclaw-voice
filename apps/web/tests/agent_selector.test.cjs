@@ -170,7 +170,9 @@ test('Team mode shows both agents, labels speakers, owners and routing, and conn
   assert.equal(env.run('ui.mode'), 'team');
   assert.match(env.getUrl(), /\?agent=team/);
   assert.equal(env.nodes.get('team-seats').hidden, false);
-  assert.equal(env.nodes.get('orb').hidden, true);
+  assert.equal(env.nodes.get('orb').hidden, false);
+  assert.match(env.nodes.get('team-seats').innerHTML, /Tari/);
+  assert.match(env.nodes.get('team-seats').innerHTML, /Astra/);
   // Both agents' jobs and cache topics, each labelled with its owner
   const jobs = env.nodes.get('jobs').innerHTML;
   assert.match(jobs, /Add Dentist event/);
