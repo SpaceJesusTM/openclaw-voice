@@ -91,8 +91,9 @@ every ten minutes while it runs on HTTP. Revoke with `openclaw devices remove`.
 ## Primary Inbox, unified schedule and microphone controls
 
 Email questions delegate to OpenClaw using its Gmail read-only helper. The
-default is `in:inbox category:primary`, including read and unread, without a
-last-day cutoff for "latest". Explicit unread or broader searches are honored.
+default is the Gmail Primary tab (`in:inbox -category:promotions -category:social`;
+see [voice-gmail-latest.md](voice-gmail-latest.md)), including read and unread,
+sorted newest first, without a last-day cutoff for "latest". Explicit unread or broader searches are honored.
 The broader helper switch is `gmail search QUERY --all-mail`. Security content
 is withheld before it reaches the agent; no codes or recovery links are spoken.
 

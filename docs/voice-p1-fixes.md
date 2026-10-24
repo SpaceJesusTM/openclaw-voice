@@ -10,8 +10,9 @@ planner data is restored byte-for-byte at handoff (see the probe finding below).
    any tool. The demo Gmail helpers and existing authorization worked. Tari's
    voice role did not explicitly route email retrieval, its target list omitted
    Gmail, and its retrieval guide discouraged Primary-only searches. The role
-   now delegates Gmail questions to OpenClaw. The helper defaults to
-   `in:inbox category:primary`, without unread or last-day restrictions. Explicit
+   now delegates Gmail questions to OpenClaw. The helper defaulted to
+   `in:inbox category:primary`, without unread or last-day restrictions (since
+   corrected to the Primary tab; see [voice-gmail-latest.md](voice-gmail-latest.md)). Explicit
    broader queries use `--all-mail`; unread is added only on request. The
    read-only profile/command guards remain; security filtering also withholds
    sign-in alerts, two-factor/backup-code and account-security content.

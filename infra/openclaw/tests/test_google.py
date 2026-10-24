@@ -127,14 +127,101 @@ class GoogleIntegrationTests(unittest.TestCase):
         self.assertIn("--sanitize-content", run.call_args.args[0])
 
     def test_primary_default_includes_read_mail_and_explicit_broad_scope(self):
-        for argv, expected in ((["gmail", "search", "--max", "1"], "in:inbox category:primary "),
-                               (["gmail", "search", "is:unread"], "in:inbox category:primary (is:unread)"),
+        primary = "in:inbox -category:promotions -category:social"
+        for argv, expected in ((["gmail", "search", "--max", "1"], primary),
+                               (["gmail", "search", "is:unread"], primary + " (is:unread)"),
+                               (["gmail", "search", "from:team@example.test"], primary + " (from:team@example.test)"),
                                (["gmail", "search", "category:updates", "--all-mail"], "category:updates")):
             status, out, err, run = self.invoke(argv, {"messages": []})
             self.assertEqual(status, 0, err)
-            self.assertEqual(run.call_args.args[0][3], expected)
+            self.assertEqual(run.call_args_list[0].args[0][3], expected)
             self.assertEqual(json.loads(out)["query"], expected)
+            self.assertNotIn("category:primary", expected)
         self.assertNotIn("is:unread", self.invoke(["gmail", "search"], {"messages": []})[1])
+
+    @staticmethod
+    def mail(message_id, received, category, unread=False):
+        labels = ["INBOX", category] + (["UNREAD"] if unread else [])
+        return {"id": message_id, "threadId": message_id, "internalDateIso": received,
+                "date": received[:16].replace("T", " "), "labels": labels,
+                "from": f"{message_id}@example.test", "subject": f"Subject {message_id}"}
+
+    def search_with(self, argv, by_query):
+        """Answer each gog search by its query, like Gmail's category filters would."""
+        def fake(command, exact):
+            self.assertEqual(exact, "gmail.messages.search")
+            query = command[3]
+            rows = [row for predicate, row in by_query if predicate(query)]
+            return {"messages": rows[:int(command[command.index("--max") + 1])]}
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(google, "run_gog", side_effect=fake) as run, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            status = google.main(argv)
+        self.assertEqual(status, 0, err.getvalue())
+        return json.loads(out.getvalue()), run
+
+    def test_latest_primary_is_newest_tab_message_not_an_old_personal_one(self):
+        """Regression: a 2025 CATEGORY_PERSONAL message was reported as the latest
+        while a newer October 2026 CATEGORY_UPDATES message showed in the Primary tab."""
+        old = self.mail("hellofresh-2025", "2025-07-21T07:50:00-04:00", "CATEGORY_PERSONAL")
+        new = self.mail("chatgpt-2026", "2026-10-23T22:29:32-04:00", "CATEGORY_UPDATES")
+        promo = self.mail("promo-2026", "2026-10-21T17:39:58-04:00", "CATEGORY_PROMOTIONS", unread=True)
+        def in_tab(query):
+            return "-category:promotions" in query or query == "in:inbox"
+        data, run = self.search_with(["gmail", "search", "--max", "1"],
+                                     [(lambda q: True, old), (in_tab, new), (lambda q: "-category:promotions" not in q, promo)])
+        latest = data["data"]["messages"]
+        self.assertEqual([row["id"] for row in latest], ["chatgpt-2026"])
+        self.assertIn("CATEGORY_UPDATES", latest[0]["labels"])
+        self.assertEqual(data["scope"], "primary_tab")
+        self.assertEqual(data["newer_outside_scope"], [])
+        self.assertEqual(run.call_args_list[0].args[0][5], "20")  # small --max still samples 20 to sort
+
+    def test_api_order_is_not_trusted_and_last_five_are_newest_first(self):
+        stamps = ["2026-10-19T13:02:00-04:00", "2026-10-23T22:29:32-04:00", "2025-07-21T07:50:00-04:00",
+                  "2026-10-20T16:25:00-04:00", "2026-10-18T08:49:00-04:00", "2026-10-22T09:00:00-04:00",
+                  "2024-08-11T19:27:00-04:00"]
+        rows = [self.mail(f"m{n}", stamp, "CATEGORY_UPDATES") for n, stamp in enumerate(stamps)]
+        data, _ = self.search_with(["gmail", "search", "--max", "5"], [(lambda q: True, row) for row in rows])
+        got = [row["internalDateIso"] for row in data["data"]["messages"]]
+        self.assertEqual(got, sorted(stamps, reverse=True)[:5])
+        self.assertNotIn("nextPageToken", data["data"])
+        self.assertIn("more", data)
+
+    def test_unread_filter_only_when_requested(self):
+        read = self.mail("read-newest", "2026-10-23T22:29:32-04:00", "CATEGORY_UPDATES")
+        unread = self.mail("unread-older", "2026-10-20T16:25:00-04:00", "CATEGORY_UPDATES", unread=True)
+        table = [(lambda q: "is:unread" not in q, read), (lambda q: True, unread)]
+        latest, _ = self.search_with(["gmail", "search", "--max", "1"], table)
+        self.assertEqual(latest["data"]["messages"][0]["id"], "read-newest")
+        only_unread, run = self.search_with(["gmail", "search", "is:unread", "--max", "1"], table)
+        self.assertEqual(only_unread["data"]["messages"][0]["id"], "unread-older")
+        self.assertIn("(is:unread)", run.call_args_list[0].args[0][3])
+
+    def test_newer_mail_outside_the_primary_tab_is_reported_not_hidden(self):
+        primary = self.mail("primary-old", "2026-10-18T08:49:00-04:00", "CATEGORY_PERSONAL")
+        promo = self.mail("promo-new", "2026-10-21T17:39:58-04:00", "CATEGORY_PROMOTIONS")
+        security = {**self.mail("alert-new", "2026-10-23T22:21:49-04:00", "CATEGORY_UPDATES"),
+                    "subject": "Security alert", "snippet": "Code 123456"}
+        data, _ = self.search_with(["gmail", "search", "--max", "1"],
+                                   [(lambda q: True, primary), (lambda q: q == "in:inbox", security),
+                                    (lambda q: q == "in:inbox", promo)])
+        self.assertEqual(data["data"]["messages"][0]["id"], "primary-old")
+        newer = data["newer_outside_scope"]
+        self.assertEqual([row["id"] for row in newer], ["alert-new", "promo-new"])
+        self.assertIn("CATEGORY_PROMOTIONS", newer[1]["labels"])
+        self.assertEqual(newer[1]["subject"], "Subject promo-new")  # one security message does not hide the rest
+        self.assertNotIn("123456", json.dumps(data))
+        self.assertIn("security-related content withheld", newer[0]["subject"])
+
+    def test_separate_tabs_follow_owner_setting(self):
+        with patch.dict(os.environ, {"TARI_GMAIL_SEPARATE_TABS": "promotions,social,updates"}):
+            status, out, err, run = self.invoke(["gmail", "search"], {"messages": []})
+        self.assertEqual(status, 0, err)
+        self.assertEqual(json.loads(out)["query"], "in:inbox -category:promotions -category:social -category:updates")
+        with patch.dict(os.environ, {"TARI_GMAIL_SEPARATE_TABS": "promotions,spam"}):
+            status, out, err, run = self.invoke(["gmail", "search"], {"messages": []})
+        self.assertEqual(status, 1)
+        run.assert_not_called()
 
     def test_malformed_mail_is_not_success(self):
         for args, response in ((["gmail", "search", "example"], {"unexpected": []}),

@@ -6,13 +6,24 @@ no production account's mailbox behavior or backlog has been imported.
 
 ## Choose the scope before searching
 
-Default to **Primary Inbox only**: `in:inbox category:primary`, including both
-read and unread. For “latest email”, search this scope with --max 1, then read
-that message by ID before summarizing its content. Do not impose a last-day
-window: the latest message may be older. Add `is:unread` only when explicitly
-requested. For broader user-requested queries (other categories, all mail,
-sent, archived, etc.), pass `--all-mail` with the exact requested query. Without
-that flag the wrapper always intersects the query with Primary Inbox.
+Default to the **Primary tab**, including both read and unread. The wrapper
+searches `in:inbox -category:promotions -category:social` (Gmail's default tabs;
+the owner can change the excluded tabs with `TARI_GMAIL_SEPARATE_TABS`). Do not
+search `category:primary`: in the API it means only the Personal category, while
+the Primary tab also shows Updates and Forums mail unless those tabs are enabled.
+
+- Latest email: `gmail search --max 1`. Last N: `gmail search --max N`. Results
+  are sorted newest first by receipt time; keep that order. Read the chosen
+  message by ID before summarizing its content, and state its date.
+- Do not impose a last-day window: the latest message may be older.
+- Unread: add `is:unread` only when explicitly requested.
+- Sender, subject or date: pass the criteria, e.g. `gmail search 'from:x' --max 5`;
+  the wrapper keeps them in the Primary tab. If the user means any inbox tab or
+  all mail, use `--all-mail 'in:inbox from:x'` or the exact broader query.
+- Other categories, all mail, sent or archived: `--all-mail` with the exact query.
+- Check `newer_outside_scope`: if it lists newer messages, say briefly that newer
+  mail exists outside the Primary tab. Never present an old result as the
+  newest mail without its date.
 
 Use metadata first and start with a small page (for example 20). Open bodies only
 for plausible actions, deadlines, changes, or requested detail. A quick on-demand

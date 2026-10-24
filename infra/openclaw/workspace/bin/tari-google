@@ -173,11 +173,80 @@ def sanitize_mail(value):
         if isinstance(item, str):
             if key in {"id", "messageId", "threadId", "nextPageToken", "internalDate", "internalDateIso", "date", "labelIds"}:
                 return item
+            if key == "labels" and re.fullmatch(r"[A-Z_]+", item):  # system labels such as CATEGORY_UPDATES
+                return item
             if sensitive or re.fullmatch(r"\s*\d{4,8}\s*", item):
                 return "[security-related content withheld]"
             return re.sub(r"https?://[^\s<>]+", "[link withheld]", item)
         return item
     return clean(value)
+
+
+SEPARATE_TABS = ("promotions", "social", "updates", "forums")
+
+
+def primary_scope():
+    """Gmail's Primary tab: the inbox minus the category tabs shown separately.
+
+    The API gives each message one category label, and `category:primary`
+    matches only CATEGORY_PERSONAL. With Gmail's default tabs (Primary,
+    Promotions, Social), Updates and Forums mail appears in the Primary tab, so
+    by default only Promotions and Social are excluded. The API cannot read the
+    owner's tab settings; TARI_GMAIL_SEPARATE_TABS overrides the list.
+    """
+    raw = os.environ.get("TARI_GMAIL_SEPARATE_TABS", "promotions,social")
+    tabs = [tab.strip().lower() for tab in raw.split(",") if tab.strip()]
+    if any(tab not in SEPARATE_TABS for tab in tabs):
+        raise GoogleError("TARI_GMAIL_SEPARATE_TABS may list only promotions, social, updates and forums.")
+    return " ".join(["in:inbox", *(f"-category:{tab}" for tab in tabs)])
+
+
+def received(row):
+    """Receipt time for ordering; rows without a parseable time sort last."""
+    try:
+        return datetime.fromisoformat(str(row.get("internalDateIso"))).timestamp()
+    except ValueError:
+        return float("-inf")
+
+
+def message_rows(result):
+    rows = result.get("messages") if isinstance(result, dict) else result
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get("id") for row in rows):
+        raise GoogleError("Google returned an unexpected message list; completeness is unknown.")
+    return rows
+
+
+def search_mail(args):
+    """Search, then order by receipt time instead of trusting the API's list order."""
+    criteria = args.query.strip()
+    query = criteria if args.all_mail else primary_scope() + (" (" + criteria + ")" if criteria else "")
+    if not 1 <= args.max <= 100 or not query.strip() or len(query) > 2200 or query.startswith("-"):
+        raise GoogleError("Use a bounded Gmail query and --max between 1 and 100.")
+    # Without a page token, fetch at least 20 so a small --max is the newest of a real sample.
+    fetch = args.max if args.page else min(100, max(args.max, 20))
+    command = ["gmail", "messages", "search", query, "--max", str(fetch)] + (["--page", args.page] if args.page else [])
+    result = run_gog(command, "gmail.messages.search")
+    rows = sorted(message_rows(result), key=received, reverse=True)
+    data = {"messages": rows[:args.max]}
+    if isinstance(result, dict) and result.get("nextPageToken") and len(rows) <= args.max:
+        data["nextPageToken"] = result["nextPageToken"]
+    output = {"data": sanitize_mail(data), "query": query, "order": "newest_first",
+              "scope": "explicit" if args.all_mail else "primary_tab"}
+    if len(rows) > args.max:
+        output["more"] = "More matching messages exist; repeat with a larger --max to see them."
+    if not args.all_mail and not args.page:
+        # Never let the Primary scope silently hide newer inbox mail.
+        newest = received(rows[0]) if rows else float("-inf")
+        shown = {row["id"] for row in rows}
+        try:
+            inbox = "in:inbox" + (" (" + criteria + ")" if criteria else "")
+            others = message_rows(run_gog(["gmail", "messages", "search", inbox, "--max", "5"], "gmail.messages.search"))
+            newer = [row for row in sorted(others, key=received, reverse=True)
+                     if row["id"] not in shown and received(row) > newest][:3]
+            output["newer_outside_scope"] = sanitize_mail(newer)
+        except GoogleError:
+            output["newer_outside_scope_unknown"] = True
+    return output
 
 
 def list_events(start, end):
@@ -258,24 +327,13 @@ def main(argv=None):
         account()
         if args.service == "gmail":
             if args.action == "search":
-                query = args.query.strip()
-                if not args.all_mail:
-                    query = "in:inbox category:primary " + ("(" + query + ")" if query else "")
-                if not 1 <= args.max <= 100 or not query.strip() or len(query) > 2200 or query.startswith("-"):
-                    raise GoogleError("Use a bounded Gmail query and --max between 1 and 100.")
-                command = ["gmail", "messages", "search", query, "--max", str(args.max)]
-                if args.page:
-                    command += ["--page", args.page]
-                result = run_gog(command, "gmail.messages.search")
-                rows = result.get("messages") if isinstance(result, dict) else result
-                if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get("id") for row in rows):
-                    raise GoogleError("Google returned an unexpected message list; completeness is unknown.")
+                output = {**search_mail(args), "untrusted_content": True, "read_only": True}
             else:
                 result = run_gog(["gmail", "get", args.message_id, "--sanitize-content"], "gmail.get")
                 row = result.get("message", result) if isinstance(result, dict) else None
                 if not isinstance(row, dict) or not row.get("id"):
                     raise GoogleError("Google returned no verifiable message.")
-            output = {"data": sanitize_mail(result), "untrusted_content": True, "read_only": True, **({"query": query} if args.action == "search" else {})}
+                output = {"data": sanitize_mail(result), "untrusted_content": True, "read_only": True}
         elif args.action == "calendars":
             output = {"calendars": calendars(), "complete": True, "untrusted_content": True}
         elif args.action == "list":

@@ -198,15 +198,25 @@ def update_workspace() -> None:
     """Upgrade known P1 templates only; back up files and never touch planner data."""
     import hashlib
     load_env()
+    # Accepted earlier template versions per file: the first P1 release and the
+    # P1 fixes release (5a78c91). Anything else is an owner customization.
     known = {
-        'bin/tari-google': 'f50891ef7d368548801ce08b7c94ebe3a7b5082e9dc631af6b7b5dbeb68d3e52',
-        'bin/day-planner': 'e71872162ebc7683627ba82b6de915d2493710baf0caa8bffef618365258d477',
-        'AGENTS.md': '93c176901088aed8babf2212e7eeedf51baeadba1dac0dc6bb0948992499f5b3',
-        'TOOLS.md': '21d38358da6a33b1c07301c2e6c2db696d5ce1fb07e8efec3a60ef8c04278790',
-        'skills/tari-gmail/SKILL.md': '020db9e7728da8b744d8c71ceb989083b280dd7b4d1abdbfee2b5ced47adbac2',
-        'skills/tari-gmail/references/retrieval.md': '919cc0d73cc63ee28fe1fb349fbe2241b31e2c8f89fef9c0ae6de3ded638587d',
-        'skills/tari-calendar/SKILL.md': 'f8bab884852b9ac4dda75898cc3e51c6c8e7245997506591be0b856007fddb1c',
-        'skills/tari-day-planner/SKILL.md': '37f8c6b610f70027f080493d0d980f86eb5e8b425479ccc2783ed52a6c175639',
+        'bin/tari-google': ('f50891ef7d368548801ce08b7c94ebe3a7b5082e9dc631af6b7b5dbeb68d3e52',
+                           '3a0a573cdb510714a8a05f224ba8674497ac958ab797140cee171d60de222df8'),
+        'bin/day-planner': ('e71872162ebc7683627ba82b6de915d2493710baf0caa8bffef618365258d477',
+                           '311a2b33f43c04d8437ec3a615993b35d275cd9e2e0d58c7675298383a08f26b'),
+        'AGENTS.md': ('93c176901088aed8babf2212e7eeedf51baeadba1dac0dc6bb0948992499f5b3',
+                     '66e7b70c2972dcba7d7409821ab7e5771624bb748057b873f78fe20438e5421a'),
+        'TOOLS.md': ('21d38358da6a33b1c07301c2e6c2db696d5ce1fb07e8efec3a60ef8c04278790',
+                    '70cc97fcc777a2056241ad7ff02763fc4d2e1230d8f8d8f7720e6f148a2287c6'),
+        'skills/tari-gmail/SKILL.md': ('020db9e7728da8b744d8c71ceb989083b280dd7b4d1abdbfee2b5ced47adbac2',
+                                      '116218daa6407d7f69aeaf1921977a058044cb8179c337048bdacd64c44b2cf1'),
+        'skills/tari-gmail/references/retrieval.md': ('919cc0d73cc63ee28fe1fb349fbe2241b31e2c8f89fef9c0ae6de3ded638587d',
+                                                     'bc7c8d315a6c6781e3e95b142dcdef464d40ffdbdff5d0e08df83408de6e4730'),
+        'skills/tari-calendar/SKILL.md': ('f8bab884852b9ac4dda75898cc3e51c6c8e7245997506591be0b856007fddb1c',
+                                         'e609def4a69de3b133d0da520690fbc1197bd98912b8a50849b6cbfb6886b3a5'),
+        'skills/tari-day-planner/SKILL.md': ('37f8c6b610f70027f080493d0d980f86eb5e8b425479ccc2783ed52a6c175639',
+                                            '9b38256929c3af695f572ba00ef32e3776364596d2957c4a6838ecea6fba0dee'),
     }
     workspace = owned_path(LOCAL / "state/workspace")
     plans = []
@@ -216,7 +226,7 @@ def update_workspace() -> None:
         new = (ROOT / "workspace" / relative).read_text()
         if old == new:
             continue
-        if hashlib.sha256(old.encode()).hexdigest() != previous:
+        if hashlib.sha256(old.encode()).hexdigest() not in previous:
             raise RuntimeError("Customized workspace file needs manual merge: " + relative +
                                ". No files changed; planner state is preserved.")
         plans.append((relative, target, old, new))
