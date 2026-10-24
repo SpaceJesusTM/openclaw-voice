@@ -29,15 +29,18 @@ class AstraBootstrapAndHelperTests(unittest.TestCase):
         shutil.copytree(BASE / "workspace", self.root / "workspace")
         shutil.copytree(BASE / "workspace-astra", self.root / "workspace-astra")
         shutil.copytree(BASE / "config", self.root / "config")
-        self.orig = (manager.ROOT, manager.LOCAL, manager.ASTRA_LOCAL, manager.ASTRA_WORKSPACE)
+        self.orig = (manager.ROOT, manager.LOCAL, manager.ASTRA_LOCAL, manager.ASTRA_WORKSPACE,
+                     manager.ASTRA_EXTERNAL_HOME, manager.keeps_private_mode)
         manager.ROOT = self.root
         manager.LOCAL = self.root / ".local"
         manager.ASTRA_LOCAL = self.root / ".local-astra"
         manager.ASTRA_WORKSPACE = self.checkout / "astra-workspace"
+        manager.ASTRA_EXTERNAL_HOME = Path(self.temp.name) / "linux-home/.local/share/clawvoice"
         self.addCleanup(self.restore)
 
     def restore(self) -> None:
-        manager.ROOT, manager.LOCAL, manager.ASTRA_LOCAL, manager.ASTRA_WORKSPACE = self.orig
+        (manager.ROOT, manager.LOCAL, manager.ASTRA_LOCAL, manager.ASTRA_WORKSPACE,
+         manager.ASTRA_EXTERNAL_HOME, manager.keeps_private_mode) = self.orig
 
     def run_helper(self, *args: str) -> subprocess.CompletedProcess[str]:
         env = {"PATH": "/usr/bin:/bin", "ASTRA_WORKSPACE_DIR": str(manager.ASTRA_WORKSPACE)}
@@ -79,6 +82,31 @@ class AstraBootstrapAndHelperTests(unittest.TestCase):
         # Repeat init preserves existing credentials and state
         manager.initialize("UTC", "Other", 19999, agent="astra", preview_port=19998)
         self.assertEqual(env_path.read_text(), env_text)
+        self.assertNotIn("ASTRA_STATE_DIR", env_text)
+
+    def test_astra_state_and_workspace_move_off_a_checkout_that_cannot_keep_private_modes(self) -> None:
+        # A Windows drive under WSL reports every directory as 0777.
+        in_checkout = self.root / ".local-astra/state"
+        manager.keeps_private_mode = lambda directory: directory != in_checkout
+        manager.initialize("America/Toronto", "Astra", 18949, agent="astra", preview_port=18950)
+        env_path = self.root / ".local-astra/runtime.env"
+        data = manager.load_env("astra")
+        home = manager.ASTRA_EXTERNAL_HOME / data["COMPOSE_PROJECT_NAME"]
+        state = Path(data["ASTRA_STATE_DIR"])
+        self.assertEqual(state, home / "state")
+        self.assertEqual(state.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((state / "openclaw.json").stat().st_mode & 0o777, 0o600)
+        self.assertFalse((in_checkout / "openclaw.json").exists())
+
+        self.assertEqual(manager.astra_workspace_dir(), home / "workspace")
+        self.assertTrue((home / "workspace/bin/astra-project").is_file())
+        self.assertFalse(manager.ASTRA_WORKSPACE.exists())
+
+        env_text = env_path.read_text()
+        manager.initialize("America/Toronto", "Astra", 18949, agent="astra", preview_port=18950)
+        self.assertEqual(env_path.read_text(), env_text)
+        self.assertEqual(env_text.count("ASTRA_STATE_DIR="), 1)
+        self.assertEqual(env_text.count("ASTRA_WORKSPACE_DIR="), 1)
 
     def test_astra_project_lifecycle_and_verification(self) -> None:
         manager.initialize("America/Toronto", "Astra", 18949, agent="astra", preview_port=18950)

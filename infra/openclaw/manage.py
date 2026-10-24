@@ -23,6 +23,9 @@ ROOT = Path(__file__).resolve().parent
 LOCAL = ROOT / ".local"
 ASTRA_LOCAL = ROOT / ".local-astra"
 ASTRA_WORKSPACE = ROOT.parent.parent / "astra-workspace"
+# Fallback home for Astra's OpenClaw state and workspace when the checkout's filesystem
+# cannot keep private modes (e.g. a Windows drive under WSL, where every file reads as 0777).
+ASTRA_EXTERNAL_HOME = Path.home() / ".local/share/clawvoice"
 DEFAULT_MODEL = "openai/gpt-6.1-sol"
 DEFAULT_PORT = 18939
 ASTRA_DEFAULT_PORT = 18949
@@ -30,13 +33,14 @@ ASTRA_DEFAULT_PREVIEW_PORT = 18950
 PLANNER_SECTION = "## Local day planner and checklist"
 
 
-def owned_path(path: Path) -> Path:
+def owned_path(path: Path, root: Path | None = None) -> Path:
     """Refuse symlinks throughout any local installation-owned path."""
+    root = root or ROOT
     path = Path(path)
-    if not path.is_relative_to(ROOT) or ".." in path.relative_to(ROOT).parts:
+    if not path.is_relative_to(root) or ".." in path.relative_to(root).parts:
         raise RuntimeError("Refusing path outside this ClawVoice checkout")
-    current = ROOT
-    for part in path.relative_to(ROOT).parts:
+    current = root
+    for part in path.relative_to(root).parts:
         current = current / part
         if current.is_symlink():
             raise RuntimeError("Refusing symlink in installation path")
@@ -70,18 +74,34 @@ def astra_workspace_dir() -> Path:
     override = os.environ.get("ASTRA_WORKSPACE_DIR")
     if override:
         return Path(override).resolve()
+    try:
+        configured = load_env("astra").get("ASTRA_WORKSPACE_DIR")
+    except RuntimeError:
+        configured = None
+    if configured:
+        return Path(configured)
     if ASTRA_WORKSPACE.parent == ROOT.parent.parent:
         return ASTRA_WORKSPACE
     return ROOT / "astra-workspace"
 
 
-def private_dir(path: Path) -> None:
-    path = owned_path(path)
-    current = ROOT
-    for part in path.relative_to(ROOT).parts:
+def private_dir(path: Path, root: Path | None = None) -> None:
+    root = root or ROOT
+    path = owned_path(path, root)
+    current = root
+    for part in path.relative_to(root).parts:
         current = current / part
         current.mkdir(exist_ok=True, mode=0o700)
         current.chmod(0o700)
+
+
+def keeps_private_mode(directory: Path) -> bool:
+    return directory.stat().st_mode & 0o777 == 0o700
+
+
+def astra_state_dir(data: dict[str, str]) -> Path:
+    override = data.get("ASTRA_STATE_DIR")
+    return Path(override) if override else local_dir_for("astra") / "state"
 
 
 def workspace_dir_create(path: Path, workspace_root: Path) -> None:
@@ -94,9 +114,9 @@ def workspace_dir_create(path: Path, workspace_root: Path) -> None:
         current.mkdir(exist_ok=True, mode=0o755)
 
 
-def write_if_absent(path: Path, data: str, mode: int = 0o600) -> None:
-    path = owned_path(path)
-    private_dir(path.parent)
+def write_if_absent(path: Path, data: str, mode: int = 0o600, root: Path | None = None) -> None:
+    path = owned_path(path, root)
+    private_dir(path.parent, root)
     if path.exists():
         if not path.is_file():
             raise RuntimeError("Expected an ordinary private file")
@@ -149,6 +169,9 @@ def load_env(agent: str = "tari") -> dict[str, str]:
     for key in required_keys:
         if not re.fullmatch(r"[a-f0-9]{64}", data.get(key, "")):
             raise RuntimeError("Missing or invalid generated private credential")
+    for key in ("ASTRA_STATE_DIR", "ASTRA_WORKSPACE_DIR"):
+        if key in data and not Path(data[key]).is_absolute():
+            raise RuntimeError(f"{key} must be an absolute path")
     return data
 
 
@@ -192,8 +215,25 @@ def initialize(
         write_if_absent(loc / "runtime.env", env_text)
 
         active_env = load_env("astra")
-        config_target = loc / "state/openclaw.json"
-        if not owned_path(config_target).exists():
+        if not keeps_private_mode(loc / "state"):
+            # OpenClaw rejects both its state and its workspace on such a filesystem.
+            external = ASTRA_EXTERNAL_HOME / active_env["COMPOSE_PROJECT_NAME"]
+            moved = {"ASTRA_STATE_DIR": external / "state", "ASTRA_WORKSPACE_DIR": external / "workspace"}
+            with owned_path(loc / "runtime.env").open("a", encoding="utf-8") as handle:
+                for key, path in moved.items():
+                    if key not in active_env:
+                        handle.write(f"{key}={path}\n")
+            active_env = load_env("astra")
+        state_dir = astra_state_dir(active_env)
+        state_root = state_dir.parent if "ASTRA_STATE_DIR" in active_env else None
+        if state_root:
+            state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            state_root.chmod(0o700)
+            private_dir(state_dir, state_root)
+            if not keeps_private_mode(state_dir):
+                raise RuntimeError("ASTRA_STATE_DIR cannot keep private permissions")
+        config_target = state_dir / "openclaw.json"
+        if not owned_path(config_target, state_root).exists():
             config = json.loads((ROOT / "config/openclaw-astra.json").read_text(encoding="utf-8"))
             config["agents"]["defaults"]["model"] = {"primary": active_env["CLAWVOICE_MODEL"], "fallbacks": []}
             config["agents"]["defaults"]["userTimezone"] = active_env["CLAWVOICE_TIMEZONE"]
@@ -204,7 +244,7 @@ def initialize(
             config["gateway"]["controlUi"]["allowedOrigins"] = [
                 f"http://localhost:{active_port}", f"http://127.0.0.1:{active_port}"
             ]
-            write_if_absent(config_target, json.dumps(config, indent=2) + "\n")
+            write_if_absent(config_target, json.dumps(config, indent=2) + "\n", root=state_root)
 
         ws_root = astra_workspace_dir()
         for subdir in ("projects", "project-state", "logs"):

@@ -23,8 +23,8 @@ services:
       - "127.0.0.1:${CLAWVOICE_OPENCLAW_PORT:-18949}:18789"
       - "127.0.0.1:${ASTRA_PREVIEW_PORT:-18950}:${ASTRA_PREVIEW_PORT:-18950}"
     volumes:
-      - ./.local-astra/state:/home/node/.openclaw
-      - ../../astra-workspace:/home/node/.openclaw/workspace
+      - ${ASTRA_STATE_DIR:-./.local-astra/state}:/home/node/.openclaw
+      - ${ASTRA_WORKSPACE_DIR:-../../astra-workspace}:/home/node/.openclaw/workspace
     read_only: true
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=268435456,mode=1777
