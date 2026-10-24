@@ -1,5 +1,10 @@
 # Team mode: several real agents in one voice room (Priority 2a)
 
+**PFinal 2 experiment:** `feat/pfinal2-higgs-overseer` defaults to intelligent Higgs
+routing. See [higgs-overseer.md](higgs-overseer.md) for the current event flow,
+launch commands, tests and limitations. The name-addressing behavior below is
+retained with `CLAWVOICE_TEAM_ROUTER_MODE=names`.
+
 Branch `feat/p2a-team-voice` (from `feat/astra-coding-agent`). Tari and Astra share one
 browser connection. You address either by name, both can work on separate requests
 at the same time, and their replies take turns on one speaking floor. The Tari-only

@@ -181,7 +181,7 @@ test('Team mode shows both agents, labels speakers, owners and routing, and conn
   assert.match(jobs, /class="owner"[^>]*>Astra</);
   assert.match(env.nodes.get('topics').innerHTML, /Tari · planner\.today/);
   assert.match(env.nodes.get('topics').innerHTML, /Astra · projects\.active/);
-  assert.match(env.nodes.get('transcript').innerHTML, /address an agent by name/);
+  assert.match(env.nodes.get('transcript').innerHTML, /talk naturally/);
 
   // Replies are labelled with their speaker; a cut reply is marked
   env.run(`
@@ -204,4 +204,28 @@ test('Team mode shows both agents, labels speakers, owners and routing, and conn
   // A job event from either team agent is kept, keyed by its owner
   env.run('upsertJob({ job_id: "JT2", agent_id: "tari", title: "Late Tari job", status: "completed" }, "job.finished")');
   assert.equal(env.run('ui.jobs.has("tari:JT2")'), true);
+});
+
+test('Team shows active agent separately from speaker and only labels a real tool decision as routed', async () => {
+  const env = setupEnv({ team: true });
+  await env.run('init()');
+  env.run('ui.mode = "team"; ui.connected = true;');
+  env.run(`onServerMessage({ kind: 'clawvoice.team.floor', addressed: 'astra', speaking: null, agents: {}, router_mode: 'overseer' });`);
+  assert.equal(env.nodes.get('agent-state').textContent, 'Astra · Ready');
+  env.run(`onServerMessage({ kind: 'clawvoice.team.floor', addressed: 'tari', speaking: 'astra', agents: {} });`);
+  assert.equal(env.nodes.get('agent-state').textContent, 'Astra · Speaking');
+  env.run(`
+    const routeLabels = [];
+    addTurn = () => ({ classList: { add() {} }, querySelector: () => ({ append: (route) => routeLabels.push(route.textContent) }) });
+    onTeamUser({ text: 'Check the website', agent: 'astra', status: 'routed', how: 'overseer', reason: 'Coding request' });
+    onTeamUser({ text: 'Thanks', agent: 'astra', status: 'routed', how: 'current' });
+    onTeamUser({ text: 'Check that', status: 'routing_failed' });
+  `);
+  assert.equal(env.run('routeLabels[0]'), 'Routed to Astra · Coding request');
+  assert.equal(env.run('routeLabels[1]'), '→ Astra');
+  assert.match(env.run('routeLabels[2]'), /routing unavailable/);
+  env.run(`onServerMessage({ kind: 'clawvoice.team.status', text: 'Routing unavailable; repeat.' }); renderSeats();`);
+  assert.equal(env.nodes.get('team-queue').textContent, 'Routing unavailable; repeat.');
+  env.run('ui.team.router_mode = "names"; resetConversationForAgent(ui.agent);');
+  assert.match(env.nodes.get('transcript').innerHTML, /Requests without a name go to nobody/);
 });

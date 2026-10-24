@@ -1,6 +1,6 @@
 """Team mode connection: one browser, every configured agent, one speaking floor.
 
-    WebRTC in -> TeamRoom (listener, name routing, agent voices, floor) -> WebRTC out
+    WebRTC in -> TeamRoom (silent router, agent voices, floor) -> WebRTC out
 
 Same transport, RTVI channel and process-level runtime as single-agent mode;
 only the middle of the pipeline differs. Jobs and caches live in each agent's

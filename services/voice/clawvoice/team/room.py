@@ -2,13 +2,10 @@
 
     WebRTC in -> TeamRoom -> WebRTC out           (Pipecat transport + RTVI, as before)
 
-- Listener: one silent Higgs session (text output, server VAD with
-  ``create_response`` off, input transcription). It hears the microphone,
-  finds turn boundaries and barge-in, and transcribes. It never generates, has
-  no tools and never sees an agent's output. This is the silent-overseer idea
-  from the agent-selector experiment, minus any model-made routing decision.
-- Routing: deterministic name addressing on the transcript (addressing.py).
-  Unnamed requests go to nobody.
+- Overseer: one silent Higgs session hears the microphone, detects turns and
+  selects agents through call_agent. Agents' outputs never reach this session.
+- Routing: bounded, serialized model decisions with explicit-name safeguards.
+  CLAWVOICE_TEAM_ROUTER_MODE=names retains the original name-only listener.
 - Voices: one AgentVoice per agent, each with its own Higgs session and its own
   AgentRuntime (cache, jobs, verifiers). Agents work at the same time.
 - Floor: one SpeakingFloor. Replies from every agent queue for it, one is
@@ -42,6 +39,7 @@ from clawvoice.config import MODEL, Settings
 from clawvoice.jobs.models import ACTIVE
 from clawvoice.team.addressing import AddressBook
 from clawvoice.team.floor import MIN_HEARD_BYTES, NOTICE_GAP, Reply, SpeakingFloor
+from clawvoice.team.overseer import Overseer, Turn, instructions, router_mode, tools
 from clawvoice.team.realtime import RealtimeSession, SessionError, session_config
 from clawvoice.team.voice import AgentVoice
 from clawvoice.voice.instructions import build_instructions
@@ -71,13 +69,17 @@ def team_vad(settings: Settings) -> dict[str, Any]:
     return vad
 
 
-def team_instructions(agent: AgentConfig, others: list[AgentConfig]) -> str:
+def team_instructions(agent: AgentConfig, others: list[AgentConfig], *, intelligent: bool = False) -> str:
     names = " and ".join(o.display_name for o in others) or "other assistants"
+    addressing = (
+        "A silent router selects the conversational agent; explicit names take priority. You receive only requests selected for you"
+        if intelligent else "The owner speaks to each of you by name, and you receive only what is said to you"
+    )
     return (
         build_instructions(agent)
         + f"""
 
-Team room: you share this voice room with {names}. The owner speaks to each of you by name, and you receive only what is said to you: you never hear {names}, their tools or their results, and they never hear yours. Speak only for yourself; never answer for {names} or claim their work. If the owner asks you about something that is {names}'s, say they can ask {names} by name. Background results reach you as notices and are spoken when the room is quiet."""
+Team room: you share this voice room with {names}. {addressing}: you never hear {names}, their tools or their results, and they never hear yours. Speak only for yourself; never answer for {names} or claim their work. If the owner asks you about something that is {names}'s, say they can ask {names} by name. Background results reach you as notices and are spoken when the room is quiet."""
     )
 
 
@@ -180,16 +182,18 @@ class TeamRoom(FrameProcessor):
         self.floor = SpeakingFloor(emit=self._emit_audio, flush=self._flush, on_event=self._floor_event,
                                    notice_ok=self._notice_ok, answer_due=self._answer_due)
         self.runtimes = {rt.agent.id: rt for rt in runtimes}
+        self.router_mode = router_mode()
         self.voices: dict[str, AgentVoice] = {}
         for rt in runtimes:
             others = [o.agent for o in runtimes if o is not rt]
             self.voices[rt.agent.id] = AgentVoice(
-                self, rt, instructions=team_instructions(rt.agent, others), voice=settings.voice_override or rt.agent.voice
+                self, rt, instructions=team_instructions(rt.agent, others, intelligent=self.router_mode == "overseer"), voice=settings.voice_override or rt.agent.voice
             )
         self.book = AddressBook({rt.agent.id: rt.agent.aliases or (rt.agent.display_name.lower(),) for rt in runtimes})
         self.default_agent = default_agent if default_agent in self.voices else next(iter(self.voices))
+        self.overseer = Overseer(self) if self.router_mode == "overseer" else None
         self.listener: RealtimeSession | None = None
-        self.addressed: str | None = None
+        self.addressed: str | None = self.default_agent if self.overseer else None
         self.last_client_audio: float | None = None
         self.closed = False
         self._client_ready = False
@@ -252,6 +256,9 @@ class TeamRoom(FrameProcessor):
             self.ui("team.error", {"agent": None, "message": "Could not start the Team room (listener). Check the Boson key and network, then reconnect.", "fatal": True})
             return
         self.listener = listener
+        if self.overseer:
+            self.overseer.connected()
+            self.floor.hand_over(self.default_agent)
         for voice, result in zip(self.voices.values(), results[1:]):
             if isinstance(result, BaseException):
                 voice.error = f"{type(result).__name__}"
@@ -269,11 +276,12 @@ class TeamRoom(FrameProcessor):
             self.settings,
             label="listener",
             config=session_config(
-                instructions=LISTENER_INSTRUCTIONS,
+                instructions=instructions([v.agent for v in self.voices.values()], self.addressed) if self.overseer else LISTENER_INSTRUCTIONS,
                 modality="text",
                 turn_detection=team_vad(self.settings),
                 transcription=True,
                 noise_reduction=self.settings.noise_reduction,
+                tools=tools(list(self.voices)) if self.overseer else None,
             ),
             on_event=self._on_listener,
             trace=self.trace,
@@ -283,6 +291,8 @@ class TeamRoom(FrameProcessor):
     async def _listener_closed(self, session: RealtimeSession) -> None:
         if self.closed or session is not self.listener:
             return
+        if self.overseer:
+            self.overseer.disconnected()
         if self.floor.user_speaking:
             self.floor.user_stopped(None)  # its "speech stopped" will never come
         self.ui("team.status", {"text": "Reconnecting the listener…"})
@@ -300,6 +310,8 @@ class TeamRoom(FrameProcessor):
                 logger.warning(f"Team listener reconnect failed: {error}")
                 continue
             self.listener = listener
+            if self.overseer:
+                self.overseer.connected()
             self.ui("team.status", {"text": ""})
             return
         self.ui("team.error", {"agent": None, "message": "Lost the Team listener; reconnect.", "fatal": True})
@@ -316,17 +328,18 @@ class TeamRoom(FrameProcessor):
             {**v.agent.public_identity(), "voice": v.voice_name, "online": v.session is not None and not v.session.closed}
             for v in self.voices.values()
         ]
-        self.ui("team.ready", {"agents": identities, "default": self.default_agent})
+        self.ui("team.ready", {"agents": identities, "default": self.default_agent, "router_mode": self.router_mode})
         await self._send({"kind": "preview-model", "configured": MODEL, "acknowledged": MODEL})
         # Unheard results from earlier connections are queued per agent as notices.
         for voice in self.voices.values():
             voice.runtime.attach(voice.seat)
         greeter = self.voices[self.default_agent]
         others = " and ".join(v.agent.display_name for v in self.voices.values() if v is not greeter)
+        greeting_hint = "talk naturally or choose either of you by name" if self.overseer else "talk to either of you by name"
         greeter.greet(
             "[ClawVoice note] The owner just joined a Team voice room with you and "
             f"{others}. Greet them in one short sentence as {greeter.agent.display_name}, mention {others} "
-            "is here too, and that they can talk to either of you by name. Do not call tools. "
+            f"is here too, and that they can {greeting_hint}. Do not call tools. "
             "This note is not from the owner."
         )
         self.changed()
@@ -368,6 +381,8 @@ class TeamRoom(FrameProcessor):
         item = str(event.get("item_id") or "")
         now = time.monotonic()
         if kind == "input_audio_buffer.speech_started":
+            if self.overseer:
+                self.overseer.speech_started(item)
             self._turns.setdefault(item, {})["started"] = self._turns.get(item, {}).get("started", now)
             await self.floor.user_started()  # barge-in: the audible reply stops; jobs are untouched
             self.ui("team.hearing", {"on": True})
@@ -375,9 +390,15 @@ class TeamRoom(FrameProcessor):
         elif kind == "input_audio_buffer.speech_stopped":
             self._turns.setdefault(item, {"started": now})["stopped"] = now
             self.floor.user_stopped(item)
+            if self.overseer:
+                self.overseer.speech_stopped(item)
             self.ui("team.hearing", {"on": False})
             self.changed()
         elif kind == "conversation.item.input_audio_transcription.completed":
+            if self.overseer and self.overseer.latest and item != self.overseer.latest.item:
+                self.floor.transcript_done(item)
+                self._turns.pop(item, None)
+                return  # a previous item's late ASR cannot become the newest turn's request
             raw = str(event.get("transcript") or "")
             if self.floor.user_speaking:
                 # The user paused briefly and already resumed speaking before the first half's
@@ -397,10 +418,14 @@ class TeamRoom(FrameProcessor):
         elif kind == "conversation.item.input_audio_transcription.failed":
             self.floor.transcript_done(item)
             self._turns.pop(item, None)
+            if self.overseer and self.overseer.latest and self.overseer.latest.item == item:
+                self.overseer._fail(self.overseer.latest, "Didn't catch that. Please repeat.")
             if getattr(self, "_deferred", None) is not None:
                 await self._flush_deferred()
             else:
                 self.ui("team.user", {"text": "", "agent": None, "status": "unclear"})
+        elif self.overseer and (str(kind).startswith("response.") or kind == "error"):
+            await self.overseer.event(event)
         elif kind == "response.created":
             logger.debug("Team listener started a response although create_response is off; ignoring it")
         elif kind == "error":
@@ -517,6 +542,55 @@ class TeamRoom(FrameProcessor):
             await self.utterance(text, started=now, ended=now, typed=True)
 
     async def utterance(self, text: str, *, started: float, ended: float, typed: bool = False) -> None:
+        if self.overseer:
+            routes = self.book.parse(text)
+            if routes and all(r.stop for r in routes):
+                self.overseer.stop()
+                for route in routes:
+                    await self._stop(route.agent, route.text, typed)
+            else:
+                self.overseer.submit(text, started=started, ended=ended, typed=typed)
+        else:
+            await self._named_utterance(text, started=started, ended=ended, typed=typed)
+
+    async def _routed_utterance(self, turn: Turn, *, choice: str | None, reason: str, failed: bool) -> None:
+        """Only resolved, current user turns enter the existing agent/floor path."""
+        routes = self.book.parse(turn.text)
+        if not turn.typed and len(routes) > 1:
+            routes = [r for r in routes if r.stop or r.bare or r.agent is None or not self._is_replayed_route(r.agent, r.request)]
+        handed_over = False
+        for route in routes:
+            if route.stop:
+                await self._stop(route.agent, route.text, turn.typed)
+                continue
+            agent = route.agent or (None if failed else choice or self.addressed)
+            if agent is None:
+                self.trace.record("team.overseer.failed", turn=turn.seq, message="Routing decision failed; request not dispatched.")
+                self.ui("team.user", {"text": route.text, "agent": None, "status": "routing_failed", "typed": turn.typed})
+                self.ui("team.status", {"text": "Could not resolve the routing decision. Please repeat, or address an agent by name."})
+                continue
+            if not handed_over:
+                await self._hand_over(agent)
+                handed_over = True
+            how = "overseer" if choice == agent and not failed else route.how if route.agent else "current"
+            data = {"text": route.text, "agent": agent, "status": "listening" if route.bare else "routed",
+                    "how": how, "typed": turn.typed, "turn": turn.seq}
+            if how == "overseer":
+                data["reason"] = reason
+            self.ui("team.user", data)
+            self.trace.record("team.route", **data)
+            if route.bare:
+                self._follow_up = (agent, time.monotonic() + FOLLOW_UP_SECONDS)
+                continue
+            self._follow_up = None
+            self._last_named = (agent, turn.ended)
+            for voice in self.voices.values():
+                voice.silenced = False
+            self._record_dispatched(agent, route.request)
+            self.voices[agent].ask(route.text)
+        self.changed()
+
+    async def _named_utterance(self, text: str, *, started: float, ended: float, typed: bool = False) -> None:
         """Route one user utterance by the name it starts (or ends) with."""
         routes = self.book.parse(text)
         if not typed and len(routes) > 1:
@@ -671,10 +745,13 @@ class TeamRoom(FrameProcessor):
         while not self.closed:
             await asyncio.sleep(TICK_SECONDS)
             try:
+                if self.overseer:
+                    self.overseer.tick()
                 await self.floor.tick()
                 now = time.monotonic()
                 deferred = getattr(self, "_deferred", None)
-                if deferred is not None and not self.floor.user_speaking and not self.floor.awaiting and now - deferred[3] >= 2.0:
+                waiting_asr = any(not key.startswith("route:") for key in self.floor.awaiting) if self.overseer else bool(self.floor.awaiting)
+                if deferred is not None and not self.floor.user_speaking and not waiting_asr and now - deferred[3] >= 2.0:
                     await self._flush_deferred()
                 if now >= next_notice:
                     next_notice = now + 0.2
@@ -718,7 +795,7 @@ class TeamRoom(FrameProcessor):
 
     def _publish(self) -> None:
         self._dirty = False
-        payload = {**self.floor.snapshot(), "addressed": self.addressed, "agents": self.agent_states()}
+        payload = {**self.floor.snapshot(), "addressed": self.addressed, "agents": self.agent_states(), "router_mode": self.router_mode}
         if payload != self._published:
             self._published = payload
             self.ui("team.floor", payload)

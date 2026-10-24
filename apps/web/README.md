@@ -6,7 +6,9 @@ to Pipecat's SmallWebRTC transport and RTVI messages; it never receives the
 Boson key or the OpenClaw Gateway token.
 
 The top bar lets you switch between **Tari** (personal assistant), **Astra** (coding
-assistant), and **Team** (Tari and Astra in one shared room, addressed by name).
+assistant), and **Team** (Tari and Astra in one shared room, with automatic Higgs
+routing and optional explicit names). The experiment and name-only rollback are
+documented in [higgs-overseer.md](../../docs/higgs-overseer.md).
 
 The whole app fits one window with no page scrollbar. Follow
 [docs/design-language.md](../../docs/design-language.md) for any change here; the

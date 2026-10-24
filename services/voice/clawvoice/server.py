@@ -33,6 +33,7 @@ from clawvoice.config import MODEL, load_settings
 from clawvoice.paths import WEB_ROOT, state_dir
 from clawvoice.runtime import Runtime, get_runtime, set_runtime
 from clawvoice.team.bot import team_members
+from clawvoice.team.overseer import router_mode
 from clawvoice.voice.telemetry import configure_logging
 
 _LOOPBACK = {"127.0.0.1", "localhost", "[::1]", "::1"}
@@ -84,8 +85,8 @@ async def agents():
         "default": runtime.registry.default_id,
         "model": MODEL,
         "agents": [agent.agent.public_identity() for agent in runtime.agents.values()],
-        # Team mode: every agent in one room, addressed by name (POST /start body {"mode": "team"}).
-        "team": {"available": len(members) >= 2, "agents": [rt.agent.id for rt in members]},
+        "team": {"available": len(members) >= 2, "agents": [rt.agent.id for rt in members],
+                 "router_mode": router_mode()},
     }
 
 

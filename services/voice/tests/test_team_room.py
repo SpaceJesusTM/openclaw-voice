@@ -43,6 +43,8 @@ def make_room():
     room.messages = []
     room.ui = lambda kind, data: room.messages.append((kind, data))
     room.changed = lambda: None
+    room.router_mode = "names"
+    room.overseer = None
     room.addressed = None
     room._follow_up = None
     room._last_named = None
