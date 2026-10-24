@@ -1,0 +1,7 @@
+# Agents this ClawVoice installation serves.
+# Priority 1 runs one live agent. Fixture agents load only with
+# CLAWVOICE_ENABLE_FIXTURES=1 (tests and the portability demo).
+# Override at runtime with CLAWVOICE_AGENTS=a,b and CLAWVOICE_DEFAULT_AGENT=a.
+default_agent: tari
+agents: [tari]
+fixture_agents: [astra]

@@ -13,5 +13,11 @@ build/
 coverage/
 captures/
 .local/
+infra/openclaw/workspace/planner/
 .DS_Store
 *.log
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
