@@ -60,7 +60,7 @@ def write_if_absent(path: Path, data: str, mode: int = 0o600) -> None:
         handle.write(data)
 
 
-def load_env(check_google: bool = True) -> dict[str, str]:
+def load_env() -> dict[str, str]:
     path = owned_path(LOCAL / "runtime.env")
     if not path.is_file():
         raise RuntimeError("Missing local configuration. Run 'init' first.")
@@ -79,8 +79,6 @@ def load_env(check_google: bool = True) -> dict[str, str]:
     port = int(data.get("CLAWVOICE_OPENCLAW_PORT", DEFAULT_PORT))
     if port < 1024 or port > 65535:
         raise RuntimeError("Invalid local Gateway port")
-    if check_google and data.get("TARI_CALENDAR_WRITES") != "0":
-        raise RuntimeError("Calendar writes must remain disabled in foundation stage")
     for key in ("OPENCLAW_GATEWAY_TOKEN", "GOG_KEYRING_PASSWORD"):
         if not re.fullmatch(r"[a-f0-9]{64}", data.get(key, "")):
             raise RuntimeError("Missing or invalid generated private credential")
@@ -110,7 +108,6 @@ def initialize(timezone: str, name: str, port: int) -> None:
         "CLAWVOICE_MODEL": DEFAULT_MODEL,
         "TARI_TIMEZONE": timezone,              # compatibility with tari-google
         "TARI_GOOGLE_ACCOUNT": "",               # set your different demo Google account
-        "TARI_CALENDAR_WRITES": "0",              # strictly read-only for this milestone
         "OPENCLAW_GATEWAY_TOKEN": secrets.token_hex(32),
         "GOG_KEYRING_PASSWORD": secrets.token_hex(32),
     }
@@ -149,8 +146,7 @@ def initialize(timezone: str, name: str, port: int) -> None:
 
 
 def compose_args(*command: str) -> tuple[list[str], dict[str, str]]:
-    # An unsafe configuration must never prevent stopping its own container.
-    data = load_env(check_google=not command or command[0] != "stop")
+    data = load_env()
     # Do not inherit production OpenClaw, Tari, Google or other model credentials.
     process_env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("COMPOSE_", "OPENCLAW_", "TARI_", "GOG_",

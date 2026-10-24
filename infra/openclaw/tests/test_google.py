@@ -1,4 +1,4 @@
-"""Read-only Google boundary tests. All provider results are fictional mocks."""
+"""Google read and native Calendar-management tests. All provider results are fictional mocks."""
 import contextlib
 import importlib.machinery
 import importlib.util
@@ -17,7 +17,7 @@ google = importlib.util.module_from_spec(spec)
 loader.exec_module(google)
 
 
-class GoogleReadOnlyTests(unittest.TestCase):
+class GoogleIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.env = patch.dict(os.environ, {"TARI_GOOGLE_ACCOUNT": "demo@example.test", "TARI_TIMEZONE": "UTC"}, clear=True)
         self.env.start()
@@ -29,7 +29,7 @@ class GoogleReadOnlyTests(unittest.TestCase):
             status = google.main(args)
         return status, out.getvalue(), err.getvalue(), run
 
-    def test_no_mutation_commands_even_when_env_enabled(self):
+    def test_gmail_writes_and_old_proposal_interface_unavailable(self):
         for args in (("calendar", "propose", "create", "primary"), ("calendar", "apply", "token"),
                      ("gmail", "send"), ("gmail", "read", "--force")):
             with self.subTest(args=args), patch.dict(os.environ, {"TARI_CALENDAR_WRITES": "1"}), patch.object(google, "run_gog") as run, contextlib.redirect_stderr(io.StringIO()):
@@ -62,7 +62,7 @@ class GoogleReadOnlyTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["GOG_HOME"], "/isolated/google")
         self.assertEqual(kwargs["timeout"], 60)
 
-    def test_internal_write_command_rejected(self):
+    def test_read_interface_cannot_invoke_calendar_delete(self):
         with patch.object(google.subprocess, "run") as run, self.assertRaises(google.GoogleError):
             google.run_gog(["calendar", "delete", "primary", "id"], "calendar.delete")
         run.assert_not_called()
@@ -141,6 +141,62 @@ class GoogleReadOnlyTests(unittest.TestCase):
             result = google.list_events("2026-10-24T00:00:00+00:00", "2026-10-25T00:00:00+00:00")
         self.assertTrue(result["complete"])
         self.assertEqual({row["calendar_id"] for row in result["events"]}, {"demo"})
+
+    def test_native_calendar_operations_and_recurrence_flags_pass_through(self):
+        examples = [
+            ["create", "shared-calendar", "--summary=Planning", "--from=2026-10-24T09:00:00-04:00",
+             "--to=2026-10-24T10:00:00-04:00", "--attendees=guest@example.test", "--rrule=RRULE:FREQ=WEEKLY"],
+            ["update", "shared-calendar", "event-a", "--summary=Renamed", "--scope=single",
+             "--original-start=2026-10-24T09:00:00-04:00"],
+            ["delete", "shared-calendar", "event-a", "--scope=all"],
+            ["respond", "shared-calendar", "event-a", "--status=accepted"],
+        ]
+        for arguments in examples:
+            with self.subTest(arguments=arguments):
+                status, out, err, run = self.invoke(["calendar", "manage", *arguments], {"id": "event-a"})
+                self.assertEqual(status, 0, err)
+                self.assertEqual(run.call_args.args, (["calendar", *arguments], "calendar"))
+                self.assertTrue(run.call_args.kwargs["calendar_management"])
+                self.assertTrue(json.loads(out)["untrusted_content"])
+                self.assertNotIn("verified", json.loads(out))
+
+    def test_calendar_management_uses_full_separate_profile(self):
+        result = subprocess.CompletedProcess([], 0, '{"id":"event-a"}', "")
+        with patch.object(google.subprocess, "run", return_value=result) as run:
+            google.run_gog(["calendar", "delete", "primary", "event-a"], "calendar", calendar_management=True)
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("--client") + 1], "tari-calendar-write")
+        self.assertEqual(cmd[cmd.index("--enable-commands") + 1], "calendar")
+        self.assertIn("--gmail-no-send", cmd)
+        self.assertIn("--force", cmd)
+        self.assertNotIn("--readonly", cmd)
+
+    def test_calendar_management_cannot_route_to_mail(self):
+        with patch.object(google.subprocess, "run") as run, self.assertRaises(google.GoogleError):
+            google.run_gog(["gmail", "send"], "calendar", calendar_management=True)
+        run.assert_not_called()
+
+    def test_native_calendar_flags_cannot_override_credentials_or_output(self):
+        for flag in ("--account=other@example.test", "-aother@example.test", "--home=/other",
+                     "--client=other", "--access-token=private", "--results-only", "--json=false"):
+            with self.subTest(flag=flag), patch.object(google, "run_gog") as run, self.assertRaises(google.GoogleError):
+                google.manage_calendar(["create", "primary", flag])
+            run.assert_not_called()
+
+    def test_calendar_timeout_is_uncertain_and_never_retried(self):
+        with patch.object(google, "run_gog", side_effect=google.GoogleError("timed out")) as run:
+            with self.assertRaisesRegex(google.GoogleError, "outcome may be unknown"):
+                google.manage_calendar(["create", "primary", "--summary=Planning"])
+        self.assertEqual(run.call_count, 1)
+
+    def test_deletion_absence_requires_actual_404_or_410(self):
+        for status in (404, 410):
+            result = subprocess.CompletedProcess([], 1, "", "googleapi: Error " + str(status) + ": gone")
+            with self.subTest(status=status), patch.object(google.subprocess, "run", return_value=result):
+                self.assertEqual(google.event("primary", "event-a", allow_absent=True), {"absent": True})
+        result = subprocess.CompletedProcess([], 1, "", "authentication failed: private response")
+        with patch.object(google.subprocess, "run", return_value=result), self.assertRaises(google.GoogleError):
+            google.event("primary", "event-a", allow_absent=True)
 
 
 if __name__ == "__main__":

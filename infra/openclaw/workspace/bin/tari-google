@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A small, strictly read-only gogcli surface for the isolated ClawVoice demo.
+"""Gmail reads and native Google Calendar management for the isolated demo.
 
 This is an application guardrail, not a sandbox for an agent with shell access.
 OAuth scopes remain the independent server-side permission boundary.
@@ -50,16 +50,20 @@ def timestamp(value):
         raise argparse.ArgumentTypeError("Use an ISO 8601 timestamp with UTC offset") from exc
 
 
-def run_gog(command, exact):
-    """Never evaluate shell text or pass through caller-supplied gog flags."""
+def run_gog(command, exact, calendar_management=False, allow_absent=False):
+    """Build argv without a shell; keep account/profile and Google service fixed."""
     allowed = {"gmail.messages.search", "gmail.get", "calendar.calendars",
                "calendar.events", "calendar.event"}
-    if exact not in allowed:
+    if calendar_management:
+        if exact != "calendar" or not command or command[0] != "calendar":
+            raise GoogleError("Calendar management cannot invoke another Google service.")
+    elif exact not in allowed:
         raise GoogleError("Only approved Google reads are available.")
-    client = "tari-read"
+    client = "tari-calendar-write" if calendar_management else "tari-read"
     cmd = ["gog", "--account", account(), "--client", client,
-           "--json", "--no-input", "--gmail-no-send", "--enable-commands-exact", exact]
-    cmd.append("--readonly")
+           "--json", "--no-input", "--gmail-no-send",
+           "--enable-commands" if calendar_management else "--enable-commands-exact", exact]
+    cmd.append("--force" if calendar_management else "--readonly")
     cmd.extend(command)
     # Preserve only storage/auth settings; inherited gog options cannot reroute
     # requests, credentials, command guards, or pagination envelopes.
@@ -76,6 +80,9 @@ def run_gog(command, exact):
         raise GoogleError("Google command unavailable or timed out; no result was verified.") from exc
     if result.returncode:
         # Do not print upstream stderr: it may contain tokens or private response bodies.
+        match = re.search(r"(?:googleapi: Error |HTTP(?: status)?[ :]+)(404|410)\b", result.stderr)
+        if allow_absent and match:
+            return {"absent": True}
         raise GoogleError("Google request failed; check owner-managed authentication and scopes.")
     if len(result.stdout) > MAX_OUTPUT:
         raise GoogleError("Google output exceeded the safe size limit; narrow the date/query range.")
@@ -115,8 +122,11 @@ def calendars():
             for row in rows]
 
 
-def event(calendar_id, event_id):
-    output = run_gog(["calendar", "event", calendar_id, event_id], "calendar.event")
+def event(calendar_id, event_id, allow_absent=False):
+    options = {"allow_absent": True} if allow_absent else {}
+    output = run_gog(["calendar", "event", calendar_id, event_id], "calendar.event", **options)
+    if allow_absent and isinstance(output, dict) and output.get("absent") is True:
+        return output
     row = output.get("event", output) if isinstance(output, dict) else None
     if not isinstance(row, dict) or not valid_event(row) or row["id"] != event_id:
         raise GoogleError("Google returned no verifiable event.")
@@ -189,6 +199,27 @@ def list_events(start, end):
             "complete": True, "nextPageToken": None, "untrusted_content": True}
 
 
+def manage_calendar(arguments):
+    """Use gog's native Calendar command/flag surface; keep credentials isolated."""
+    if not arguments or arguments[0].startswith("-"):
+        raise GoogleError("Pass a native Calendar command, for example create, update, delete, or respond.")
+    # Native event/recurrence/attendee flags pass through. Auth and output flags
+    # belong to this wrapper so they cannot reroute the account or expose tokens.
+    reserved = {"--account", "--acct", "-a", "--client", "--home", "--access-token",
+                "--quota-project", "--enable-commands", "--enable-commands-exact", "--disable-commands",
+                "--readonly", "--gmail-no-send", "--json", "-j", "--machine", "--plain", "-p",
+                "--tsv", "--results-only", "--select", "--pick", "--project", "--verbose", "-v",
+                "--no-input", "--non-interactive", "--noninteractive"}
+    if any(arg.split("=", 1)[0] in reserved or arg.startswith(("-a", "-j", "-p", "-v")) for arg in arguments):
+        raise GoogleError("Calendar account, credentials and output settings are managed by the wrapper.")
+    try:
+        data = run_gog(["calendar", *arguments], "calendar", calendar_management=True)
+    except GoogleError:
+        raise GoogleError("Calendar request was not verified. If a change was attempted, its outcome may be unknown; inspect the event before retrying.") from None
+    # This is the native API receipt, not a claim of independent read-back.
+    return {"data": data, "untrusted_content": True}
+
+
 def parser():
     cli = argparse.ArgumentParser(description=__doc__)
     groups = cli.add_subparsers(dest="service", required=True)
@@ -208,6 +239,9 @@ def parser():
     get = calendar.add_parser("get")
     get.add_argument("calendar_id", type=identifier)
     get.add_argument("event_id", type=identifier)
+    get.add_argument("--allow-absent", action="store_true", help="Treat verified 404/410 as absence")
+    manage = calendar.add_parser("manage", help="Native gog Calendar commands and event-management flags")
+    manage.add_argument("arguments", nargs=argparse.REMAINDER)
     return cli
 
 
@@ -237,7 +271,9 @@ def main(argv=None):
         elif args.action == "list":
             output = list_events(args.start, args.end)
         elif args.action == "get":
-            output = {"event": event(args.calendar_id, args.event_id), "untrusted_content": True}
+            output = {"event": event(args.calendar_id, args.event_id, allow_absent=args.allow_absent), "untrusted_content": True}
+        elif args.action == "manage":
+            output = manage_calendar(args.arguments)
         print(json.dumps(output, ensure_ascii=False))
         return 0
     except (GoogleError, ValueError, OSError, argparse.ArgumentTypeError) as exc:

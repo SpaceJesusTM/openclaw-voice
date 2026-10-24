@@ -1,5 +1,29 @@
 # OpenClaw foundation audit — 2026-10-23
 
+**Calendar management update:** the owner requested full Calendar access. The
+integration now uses native gog Calendar management through a separate
+`tari-calendar-write` profile requesting full `calendar` OAuth scope. Gmail
+remains read-only under `tari-read`. Create/edit/delete, recurrence, attendees,
+reminders, meeting links and invitation responses use native flags; the adapter
+has no primary-only/owned-only limit or custom proposal-token engine.
+
+This follows Tari Public's separation of read and Calendar write credentials,
+but deliberately exposes native Calendar management instead of its limited
+primary-calendar proposal wrapper. Production Tari was not accessed or modified.
+The deprecated `TARI_CALENDAR_WRITES` blocker was removed; OAuth grants govern
+access. Agent instructions require actual user intent and read-back verification.
+
+**29 offline tests pass**. Actual Docker dry-runs through the adapter validate
+create, update and delete commands; an offline authorization dry-run confirms
+that the management profile requests Calendar scope and no Gmail scope. These
+are command/permission-plan checks, not live Google acceptance. No Google account
+or client JSON is configured yet, so no live Google reads/writes were attempted.
+Five demo workspace files were updated with private backups; configuration,
+OAuth/Gateway credentials, Google store and existing sessions were unchanged.
+Complete [Google owner setup](openclaw-setup.md#3-register-and-authorize-a-different-google-account)
+before testing a disposable real event lifecycle. The earlier audit snapshots
+below record the previous read-only feature scope.
+
 **Current status after configuration simplification:** real GPT-6.1 Sol inference
 and two-turn conversation continuity pass through the authenticated local Gateway.
 Native session metadata records provider `openai` and model `gpt-6.1-sol`; native

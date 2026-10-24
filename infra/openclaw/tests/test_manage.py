@@ -43,7 +43,6 @@ class FoundationBootstrapTests(unittest.TestCase):
             "http://localhost:19501", "http://127.0.0.1:19501"])
         self.assertEqual((self.root / ".local/state/workspace/IDENTITY.md").read_text().count(
             "Example Assistant"), 1)
-        self.assertIn("TARI_CALENDAR_WRITES=0", original)
         self.assertNotIn("OPENAI_API_KEY=", original)
         self.assertTrue((self.root / ".local/state/workspace/bin/tari-google").exists())
         self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
@@ -77,13 +76,6 @@ class FoundationBootstrapTests(unittest.TestCase):
         self.assertNotIn("CODEX_HOME", env)
         self.assertNotIn("OPENAI_API_KEY", env)
         self.assertNotIn("GOG_ACCOUNT", env)
-
-    def test_google_writes_still_rejected(self):
-        manager.initialize("UTC", "Demo", 19501)
-        path = self.root / ".local/runtime.env"
-        path.write_text(path.read_text().replace("TARI_CALENDAR_WRITES=0", "TARI_CALENDAR_WRITES=1"))
-        with self.assertRaises(RuntimeError):
-            manager.load_env()
 
     def test_init_repairs_permissions_without_overwriting(self):
         manager.initialize("UTC", "Demo", 19501)
@@ -129,15 +121,6 @@ class FoundationBootstrapTests(unittest.TestCase):
             self.assertEqual(manager.main(), 0)
         self.assertEqual(run.call_args.args[-5:],
                          ("/app/openclaw.mjs", "models", "auth", "login", "--help"))
-
-    def test_can_stop_own_container_with_google_writes_misconfigured(self):
-        manager.initialize("UTC", "Demo", 19501)
-        path = self.root / ".local/runtime.env"
-        path.write_text(path.read_text().replace("TARI_CALENDAR_WRITES=0", "TARI_CALENDAR_WRITES=1"))
-        cmd, env = manager.compose_args("stop", "openclaw")
-        self.assertEqual(cmd[-2:], ["stop", "openclaw"])
-        with self.assertRaises(RuntimeError):
-            manager.compose_args("up", "-d", "openclaw")
 
     def test_refuse_parent_traversal(self):
         with self.assertRaises(RuntimeError):

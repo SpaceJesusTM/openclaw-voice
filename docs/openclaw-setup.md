@@ -2,7 +2,7 @@
 
 Start here from the repository root. This independent demo pins OpenClaw
 **2026.9.9** and gogcli **0.40.0**, with one agent, stable ID `tari`.
-Only Gmail and Calendar reads are integrated.
+Gmail is read-only; Google Calendar supports full native management.
 
 **Current checkpoint:** Docker build, startup, schema, health, authentication
 boundary and isolated storage passed on macOS/arm64. The audit-created demo is
@@ -127,7 +127,7 @@ In [Google Cloud Console](https://console.cloud.google.com/):
 1. Create/select a project; enable **Gmail API** and **Google Calendar API**.
 2. Configure Google Auth Platform branding, audience and data access. For a
    personal account use External; in Testing add the demo account as a test user.
-3. Register the read scopes below and create a **Desktop app** OAuth client.
+3. Register the scopes below and create a **Desktop app** OAuth client.
 4. Download its JSON locally to `infra/openclaw/.local/google/client_secret.json`.
 
 ```bash
@@ -139,16 +139,19 @@ Data scopes:
 ```text
 https://www.googleapis.com/auth/gmail.readonly
 https://www.googleapis.com/auth/calendar.readonly
+https://www.googleapis.com/auth/calendar
 ```
 
-Basic identity scopes may also appear for account verification. Do not approve
-Gmail modify/send, full Calendar, Drive or unrelated data scopes. A fresh Desktop
+The read profile requests the first two scopes. The separate Calendar management
+profile requests full `calendar` access, enabling the event management requested
+for this demo. Basic identity scopes may also appear. Gmail modify/send, Drive
+and other unrelated scopes are not needed. A fresh Desktop
 client avoids mixing this grant with a production app grant. Reusing a client
 definition is possible if its audience/test users permit the separate account;
 authorization and token storage must still be independent.
 
 Edit `infra/openclaw/.local/runtime.env` locally:
-`TARI_GOOGLE_ACCOUNT=your-other-account@example.com`. Keep `TARI_CALENDAR_WRITES=0`.
+`TARI_GOOGLE_ACCOUNT=your-other-account@example.com`.
 
 ```bash
 python3 infra/openclaw/manage.py start
@@ -163,12 +166,30 @@ redirect page may fail to load; follow the CLI prompt. Never post that URL here.
 Confirm the selected email and granted scopes in your terminal and Google's
 account authorization screen.
 
-`tari-read` is a fixed named profile with an independent file keyring in the
-`.local/google` mount; its generated password is in private `runtime.env`.
-Read-only OAuth scopes are the Google-side write boundary. The wrapper also
-always sets `--readonly`, `--gmail-no-send` and an exact command allowlist.
-It exposes no create/update/delete/propose/apply/send functions, even if a write
-environment variable is changed.
+Keep `tari-read` for read-only Gmail/Calendar access. Authorize a separate
+Calendar-only management profile, using the same downloaded Desktop client:
+
+```bash
+python3 infra/openclaw/manage.py gog --client tari-calendar-write auth credentials set /home/node/.config/gogcli/client_secret.json
+python3 infra/openclaw/manage.py gog --client tari-calendar-write auth add your-other-account@example.com --services calendar --manual
+python3 infra/openclaw/manage.py gog --client tari-calendar-write auth list --check
+```
+
+Use the exact same demo account. This command deliberately omits `--readonly`
+and requests `https://www.googleapis.com/auth/calendar`; it requests no Gmail
+write scope. Keep all authorization URLs/codes in your own terminal.
+
+Both profiles live in this installation's private `.local/google` file keyring.
+Gmail commands always use `tari-read`, `--readonly`, `--gmail-no-send` and an exact
+read-command allowlist. Calendar management uses `tari-calendar-write` and native
+gog Calendar commands/flags. Native Calendar access includes create/edit/delete,
+recurrence, attendees, reminders, meeting links and invitation responses, subject
+to Google's permissions on each selected calendar. There is no primary-only
+or owned-calendar-only restriction.
+
+No custom proposal-token engine or separate Calendar enable flag is required.
+OAuth authorization grants access. Legacy `TARI_CALENDAR_WRITES` values are
+ignored; they no longer prevent management or change Gmail permissions.
 
 External apps in Testing generally receive refresh tokens expiring after seven
 days for these scopes. Workspace administrators may restrict third-party apps.
@@ -202,8 +223,36 @@ python3 infra/openclaw/manage.py chat "Use ./bin/tari-google to search my demo G
 
 Adjust the date. Confirm tool execution/results in the private session trajectory;
 a plausible summary is insufficient evidence. Both helper and agent checks must
-pass. Do not test writes against Google: unavailable wrapper commands are tested
-offline.
+pass. To validate writes, use a disposable event you explicitly intend to create,
+change and delete; the sequence below acts only on its returned event ID.
+
+After both Google profiles are authorized, optionally exercise this real lifecycle.
+Only run it if you want this actual disposable event; replace dates/timezone as
+desired and replace EVENT_ID with the ID returned by creation:
+
+```bash
+python3 infra/openclaw/manage.py google calendar manage create primary --summary 'ClawVoice integration test' --from '2026-10-24T10:00:00-04:00' --to '2026-10-24T10:15:00-04:00' --send-updates none
+python3 infra/openclaw/manage.py google calendar get primary EVENT_ID
+python3 infra/openclaw/manage.py google calendar manage update primary EVENT_ID --summary 'ClawVoice integration test renamed' --send-updates none
+python3 infra/openclaw/manage.py google calendar get primary EVENT_ID
+python3 infra/openclaw/manage.py google calendar manage delete primary EVENT_ID --send-updates none
+python3 infra/openclaw/manage.py google calendar get primary EVENT_ID --allow-absent
+```
+
+For an agent-level write test, give Tari a concrete create/reschedule/delete request
+for a disposable event, then inspect the native receipt and read-back. A specific
+request authorizes that change; vague cleanup and ambiguous recurring scope need
+clarification. Shared/secondary calendars work when the account has permission.
+The adapter passes native event options through; use `gog calendar COMMAND --help`
+for the installed command's flags. For recurring changes choose `--scope` and
+`--original-start` deliberately; all-day event end dates are exclusive.
+
+The adapter returns API receipts without claiming independent verification.
+Read back creates/edits and verify deletion through absence or cancellation.
+A 404/410 read-back can establish absence; auth errors cannot. Timeouts or failed
+read-back mean uncertainty: inspect the calendar before retrying, especially
+after creation. `--dry-run` produces previews only. Native `--force` skips a CLI
+prompt; it is not evidence of user authorization.
 
 The wrapper sanitizes Gmail bodies/links and conservatively withholds recognizable
 security mail and standalone codes. It can over-redact and cannot detect every
@@ -235,8 +284,9 @@ available. The helper is executable by the agent; successful agent use awaits
 live acceptance.
 
 The agent has shell access in this disposable container. The wrapper and prompt
-are guardrails, not a sandbox against a malicious shell process. Narrow OAuth
-scopes and mounting only demo data are independent boundaries. The Gateway token
+are guardrails, not a sandbox against a malicious shell process. Gmail has narrow
+read-only OAuth scopes; Calendar deliberately has full authorized access.
+Mounting only demo data keeps this separate from production Tari. The Gateway token
 is an owner credential; keep it server-side. Loopback publishing does not protect
 it from other containers sharing the Docker network.
 
@@ -252,7 +302,7 @@ Common failures:
 - **Missing model auth:** finish step 2 and inspect `models status --agent tari --json --check`.
 - **Sol rejected after OAuth:** stop for an explicit account/model decision.
 - **Google read fails:** check enabled APIs, test users, exact account, profile,
-  readonly scopes and grant expiry.
+  the read profile, full Calendar management grant and grant expiry.
 - **Port occupied:** leave the other service alone. Choose a different fresh
   installation port, or deliberately update private env and allowed origins.
 - **Updates absent after pulling:** init preserves private files. Compare tracked

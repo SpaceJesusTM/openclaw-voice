@@ -9,7 +9,7 @@ OpenClaw agents. Voice is powered by **Boson Higgs Realtime 1.5 Preview**
 - [x] Direct Higgs 1.5 realtime test — `experiments/higgs-realtime-1.5/`
 - [x] Pipecat + Higgs 1.5 experiment — `experiments/pipecat-higgs-1.5/`
 - [ ] Standalone OpenClaw demo agent with ChatGPT/Codex auth, Gmail and Calendar
-      reads — Docker and real Sol conversations validated; Google authorization/reads pending
+      access — Docker and Sol validated; Gmail reads/Calendar management await Google authorization
 - [ ] Server-side Pipecat/OpenClaw bridge with hot context and recent-result cache
 - [ ] Multiple persistent agents, distinct voices, name routing and collaboration
 - [ ] Optional multi-person shared conversations
@@ -26,7 +26,7 @@ python3 infra/openclaw/manage.py start
 
 Then follow **[OpenClaw + Google owner setup](docs/openclaw-setup.md)** for
 ChatGPT-based GPT-6.1 Sol authentication and a separate Google account's
-Gmail/Calendar read-only consent. See the [foundation audit](docs/openclaw-audit.md)
+Gmail read-only consent and full Calendar authorization. See the [foundation audit](docs/openclaw-audit.md)
 for completed runtime checks and the remaining account-dependent tests.
 
 OpenClaw Gateway is local-only on port **18939** by default. Separate generated

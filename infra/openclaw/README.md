@@ -18,7 +18,9 @@ until you complete ChatGPT/Codex OAuth locally. The Gateway listens at
 `http://127.0.0.1:18939` by default. Google requires a separate,
 manually approved OAuth profile; the complete procedure is in the setup guide.
 
-Only Gmail and Calendar **reads** are available; write helpers were removed.
+Gmail remains **read-only**. Calendar supports full native event management
+(create/edit/delete, recurrence, attendees and invitation responses) through
+`calendar manage` after separate Calendar OAuth authorization.
 Tari starts with Sol and no automatic model fallbacks. OpenClaw manages models,
 utility selection and credentials natively; ClawVoice imposes no model/profile allowlist.
 See the [audit results](../../docs/openclaw-audit.md). To keep future personalization flexible, voice identity,

@@ -22,7 +22,7 @@ supplies application-specific identity, permissions, routing and caches.
 
 Only one demo OpenClaw agent (`tari`) is configured initially, with strictly
 separate `infra/openclaw/.local/` secrets and mutable state. It does not access
-the user's production Tari instance. Gmail and Calendar read access come from a
+the user's production Tari instance. Gmail read access and full Calendar management come from a
 different Google account after an explicit OAuth authorization.
 
 The current foundation does not depend on running the earlier Higgs experiments,
@@ -38,8 +38,8 @@ a stable session key, never an authentication credential.
 ## Next milestones
 
 1. ChatGPT OAuth and a two-turn Sol conversation are validated for the local demo.
-2. Owner separately authorizes the Gmail/Calendar OAuth read profile.
-3. Validate Google CLI reads and agent-initiated reads in the container.
+2. Owner authorizes the Gmail/Calendar read profile and separate full Calendar profile.
+3. Validate Google reads and a disposable Calendar create/edit/delete lifecycle through the CLI and agent.
 4. Add a server-side Pipecat to OpenClaw Gateway bridge, retaining nonblocking jobs.
 5. Priorities 2a/2b: multiple independent agents, distinct Higgs voices,
    name routing, collaboration, and turn/floor coordination.

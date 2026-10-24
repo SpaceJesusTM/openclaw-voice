@@ -18,7 +18,8 @@ agent-to-agent collaboration, and eventual shared human/agent rooms.
   fallbacks in the demo. Models, credentials and tools are configurable through
   OpenClaw's native management; do not impose a platform-wide model or OAuth profile.
   Verify actual inference separately from configured model/auth status.
-- Google Gmail/Calendar are read-only until owner-requested later expansion.
+- Gmail is read-only. Calendar has full event management via a separate
+  authorized profile. Only perform changes the user requested; verify results.
 - Reuse Pipecat transport, audio, workers and OpenClaw Gateway primitives
   rather than rebuilding generic framework functionality.
 - Keep names, voices, frontend appearances, routing, and caches configurable.
@@ -27,7 +28,7 @@ agent-to-agent collaboration, and eventual shared human/agent rooms.
 
 Foundation: isolated Docker OpenClaw, explicit ChatGPT/Codex OAuth, different
 Google account through its own desktop OAuth client, and verified Gmail/Calendar
-reads. No voice-to-OpenClaw bridging in this milestone.
+reads and user-requested Calendar management. No voice-to-OpenClaw bridging in this milestone.
 
 When user input or account approval is required, stop at a documented checkpoint.
 Tests without real provider access are not proof of live integration.
