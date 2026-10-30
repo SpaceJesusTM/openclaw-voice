@@ -1,5 +1,10 @@
 # Chorus
 
+## Contributors
+
+- **SpaceJesusTM**: Individual AI agent implementations and integrations.
+- **Jefferson-Liu**: Designed and implemented multi-agent overseer architecture.
+
 **Your entire AI agent team, at the tip of your tongue.**
 
 Chorus is a real-time voice harness for talking to several independently configured
