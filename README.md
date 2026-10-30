@@ -1,9 +1,6 @@
 # Chorus
 
-## Contributors
 
-- **SpaceJesusTM**: Individual AI agent implementations and integrations.
-- **Jefferson-Liu**: Designed and implemented multi-agent overseer architecture.
 
 **Your entire AI agent team, at the tip of your tongue.**
 
@@ -416,6 +413,11 @@ Validation records from development are kept in `docs/` (for example
 Chorus was developed under the working name **ClawVoice**. Internal identifiers keep
 that name for compatibility: the `clawvoice` Python package, `clawvoice.*` API events,
 `CLAWVOICE_*` environment variables, file paths and some log messages.
+
+## Contributors
+
+- **SpaceJesusTM**: Individual AI agent implementations and integrations.
+- **[Jefferson-Liu](https://github.com/Jefferson-Liu)**: Designed and implemented multi-agent overseer architecture.
 
 ## License
 
